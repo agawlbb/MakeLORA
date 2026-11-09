@@ -9,10 +9,11 @@ The workflows follow [FanControlWatch](https://github.com/agawlbb/FanControlWatc
 
 ## One-time setup
 
-Register this bundle identifier and create its iOS app record in App Store Connect under the existing team. Create or select an internal testing group (the verification script prefers `Internal Testing`; otherwise there must be exactly one internal group). Complete any outstanding Apple agreements.
+Register this bundle identifier and create its iOS app record in App Store Connect under the existing team. The release script creates a private internal group if needed, adds the configured sole tester, and verifies that no other testers or public links can receive the build. The tester must be an existing App Store Connect user with access to this app. Complete any outstanding Apple agreements.
 
 Add these Actions secrets to MakeLORA, reusing the original private credentials used by FanControlWatch:
 
+- `TESTFLIGHT_TESTER_EMAIL` — the sole intended tester; kept out of public source and logs
 - `ASC_KEY_ID`
 - `ASC_ISSUER_ID`
 - `ASC_PRIVATE_KEY` — original `.p8` contents
