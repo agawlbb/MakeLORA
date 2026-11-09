@@ -57,7 +57,7 @@ actor ImageEngine {
                     let unchanged = isControl ? old?.control == photoID && old?.controlCrop == crop : old?.target == photoID && old?.targetCrop == crop
                     if !unchanged || !fm.fileExists(atPath: path.path) {
                         guard let photo = project.photos.first(where: { $0.id == photoID }) else { throw ProjectError.invalid("Pair \(pair.id) is missing a photo. Replace that photo and try again.") }
-                        try renderJPEG(source: directory.appendingPathComponent("originals/\(photo.filename)"), crop: crop, destination: path)
+                        try autoreleasepool { try renderJPEG(source: directory.appendingPathComponent("originals/\(photo.filename)"), crop: crop, destination: path) }
                     }
                 }
                 try Data(pair.caption.utf8).write(to: dataset.appendingPathComponent("target/\(pair.id).txt"), options: .atomic)

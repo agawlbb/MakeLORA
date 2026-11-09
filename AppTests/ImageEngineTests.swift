@@ -49,6 +49,30 @@ final class ImageEngineTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: jpg.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("originals/\(photo.filename)").path))
     }
+    func testPNGToJPGAndStaleRevisions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 60, height: 40), format: format).image { context in
+            UIColor.green.setFill(); context.fill(CGRect(x: 0, y: 0, width: 30, height: 40))
+        }
+        let engine = ImageEngine()
+        let photo = try await engine.importPhoto(data: XCTUnwrap(image.pngData()), name: "transparent.png", directory: directory)
+        var project = Project(name: "PNG")
+        project.photos = [photo]; project.addPair(control: photo.id, target: photo.id)
+        project.pairs[0].caption = "Current caption"
+        try await engine.synchronize(project, directory: directory, revision: 5)
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(directory.appendingPathComponent("dataset/target/1.jpg") as CFURL, nil))
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, UTType.jpeg.identifier)
+        project.pairs[0].caption = "Stale caption"
+        try await engine.synchronize(project, directory: directory, revision: 4)
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("dataset/target/1.txt"), encoding: .utf8), "Current caption")
+        do {
+            _ = try await engine.importPhoto(data: Data("not an image".utf8), name: "broken.heic", directory: directory)
+            XCTFail("Malformed image should be rejected")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("Cannot import")) }
+    }
     @MainActor func testProjectAutosaveAndReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

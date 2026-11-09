@@ -37,8 +37,6 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         ITSAppUsesNonExemptEncryption: false
-    scheme:
-      gatherCoverageData: false
   MakeLORATests:
     type: bundle.unit-test
     platform: iOS
