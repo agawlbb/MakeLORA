@@ -73,6 +73,35 @@ final class ImageEngineTests: XCTestCase {
             XCTFail("Malformed image should be rejected")
         } catch { XCTAssertTrue(error.localizedDescription.contains("Cannot import")) }
     }
+    func testRecoveryAfterPartialGenerationFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 60, height: 40), format: format).image { context in
+            UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 60, height: 40))
+        }
+        let engine = ImageEngine()
+        let photo = try await engine.importPhoto(data: XCTUnwrap(image.pngData()), name: "original.png", directory: directory)
+        var original = Project(name: "Recovery")
+        original.photos = [photo]; original.addPair(control: photo.id, target: photo.id)
+        try await engine.synchronize(original, directory: directory, revision: 1)
+        var broken = original
+        let missing = LibraryPhoto(filename: "missing.png", name: "Missing original")
+        broken.photos.append(missing)
+        broken.pairs[0].controlCrop = Crop(width: 0.5)
+        broken.pairs[0].target = missing.id
+        do {
+            try await engine.synchronize(broken, directory: directory, revision: 2)
+            XCTFail("Generation should fail when a source file is missing")
+        } catch { }
+        // Restoring the original settings must replace the partially written crop,
+        // even though those settings matched the last successful cache marker.
+        try await engine.synchronize(original, directory: directory, revision: 3)
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(directory.appendingPathComponent("dataset/control/1.jpg") as CFURL, nil))
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 60)
+    }
     @MainActor func testProjectAutosaveAndReopen() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

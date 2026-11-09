@@ -47,6 +47,9 @@ actor ImageEngine {
         for folder in ["control", "target"] { try fm.createDirectory(at: dataset.appendingPathComponent(folder), withIntermediateDirectories: true) }
         let marker = directory.appendingPathComponent("generated.json")
         let previous = (try? JSONDecoder().decode([ImagePair].self, from: Data(contentsOf: marker))) ?? []
+        // Invalidate the cache before changing outputs. A failed/terminated write
+        // must never leave an old marker claiming that partially replaced files match.
+        if fm.fileExists(atPath: marker.path) { try fm.removeItem(at: marker) }
         for pair in project.pairs {
             try autoreleasepool {
                 let old = previous.first { $0.id == pair.id }
