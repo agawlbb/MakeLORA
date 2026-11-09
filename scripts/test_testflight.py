@@ -32,40 +32,31 @@ class SoleTesterTests(unittest.TestCase):
                 release.sole_tester_group('app')
             self.assertEqual(request.call_count, 1)
 
-    def test_create_group_and_add_only_requested_existing_tester(self):
-        assigned = False
+    def test_empty_group_allows_build_but_not_distribution(self):
         def api(path, body=None):
-            nonlocal assigned
-            if path == 'apps/app/betaGroups?limit=200': return {'data': []}
+            self.assertIsNone(body)
+            return {'data': [self.group] if path.startswith('apps/') else []}
+        with patch.object(release, 'request', side_effect=api):
+            self.assertEqual(release.sole_tester_group('app', require_tester=False), self.group)
+            with self.assertRaisesRegex(SystemExit, 'Internal tester assignment'):
+                release.sole_tester_group('app')
+
+    def test_email_must_match_exactly_in_group(self):
+        other = {'id': 'other', 'attributes': {'email': 'not-tester@example.invalid'}}
+        with patch.object(release, 'request', side_effect=[{'data': [self.group]}, {'data': [other]}]):
+            with self.assertRaisesRegex(SystemExit, 'Remove other testers'):
+                release.sole_tester_group('app')
+
+    def test_create_empty_private_internal_group(self):
+        def api(path, body=None):
+            if path.startswith('apps/'): return {'data': []}
             if path == 'betaGroups':
                 self.assertTrue(body['data']['attributes']['isInternalGroup'])
                 self.assertFalse(body['data']['attributes']['publicLinkEnabled'])
                 return {'data': self.group}
-            if path == 'betaGroups/group/betaTesters?limit=200': return {'data': [self.tester] if assigned else []}
-            if path.startswith('betaTesters?'): return {'data': [self.tester]}
-            if path == 'betaGroups/group/relationships/betaTesters':
-                self.assertEqual(body, {'data': [{'type': 'betaTesters', 'id': 'tester'}]})
-                assigned = True
-                return {}
-            self.fail('Unexpected API operation: ' + path)
+            return {'data': []}
         with patch.object(release, 'request', side_effect=api):
-            self.assertEqual(release.sole_tester_group('app')['id'], 'group')
-            self.assertTrue(assigned)
-
-    def test_email_filter_must_match_exact_address(self):
-        other = {'id': 'other', 'attributes': {'email': 'not-tester@example.invalid'}}
-        self.assertEqual(release.select_tester([other, self.tester], 'tester@example.invalid'), self.tester)
-        self.assertIsNone(release.select_tester([other], 'tester@example.invalid'))
-
-    def test_duplicate_email_prefers_existing_internal_tester(self):
-        external = {'id': 'a-external', 'attributes': {'email': 'tester@example.invalid'}}
-        with patch.object(release, 'all_items', side_effect=[[], [self.group]]):
-            self.assertEqual(release.select_tester([external, self.tester], 'tester@example.invalid'), self.tester)
-
-    def test_duplicate_internal_records_select_only_one_identity(self):
-        second = {'id': 'z-second', 'attributes': {'email': 'TESTER@example.invalid'}}
-        with patch.object(release, 'all_items', return_value=[self.group]):
-            self.assertEqual(release.select_tester([second, self.tester], 'tester@example.invalid'), self.tester)
+            self.assertEqual(release.sole_tester_group('app', require_tester=False), self.group)
 
 
 if __name__ == '__main__':

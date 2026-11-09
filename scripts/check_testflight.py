@@ -49,19 +49,7 @@ def all_items(path):
     return result
 
 
-def select_tester(candidates, email):
-    # Apple's email filter can return broader matches and duplicate records.
-    matches = [t for t in candidates if (t['attributes'].get('email') or '').strip().casefold() == email]
-    if len(matches) > 1:
-        internal = [t for t in matches if any(g['attributes'].get('isInternalGroup')
-            for g in all_items('betaTesters/' + t['id'] + '/betaGroups?limit=200'))]
-        matches = internal or matches
-    # Every remaining record has the same authorized email address. Prefer an
-    # existing internal identity, then choose deterministically without adding duplicates.
-    return min(matches, key=lambda t: t['id']) if matches else None
-
-
-def sole_tester_group(app):
+def sole_tester_group(app, require_tester=True):
     email = os.environ['TESTFLIGHT_TESTER_EMAIL'].strip().casefold()
     if not email or '@' not in email:
         raise SystemExit('Set TESTFLIGHT_TESTER_EMAIL to the intended sole tester before releasing.')
@@ -85,18 +73,11 @@ def sole_tester_group(app):
         group = chosen[0]
     path = 'betaGroups/' + group['id'] + '/betaTesters?limit=200'
     testers = all_items(path)
-    if not testers:
-        candidates = all_items('betaTesters?' + urllib.parse.urlencode({'filter[email]': email, 'limit': 200}))
-        tester = select_tester(candidates, email)
-        if tester:
-            request('betaGroups/' + group['id'] + '/relationships/betaTesters', {
-                'data': [{'type': 'betaTesters', 'id': tester['id']}]})
-        else:
-            request('betaTesters', {'data': {'type': 'betaTesters', 'attributes': {'email': email},
-                'relationships': {'betaGroups': {'data': [{'type': 'betaGroups', 'id': group['id']}]}}}})
-        testers = all_items(path)
+    if not testers and not require_tester:
+        print('Private internal group is empty; add the intended sole tester in App Store Connect before distribution.', flush=True)
+        return group
     if len(testers) != 1 or testers[0]['attributes']['email'].casefold() != email:
-        raise SystemExit('The internal group must contain exactly the intended sole tester. Verify their App Store Connect app access.')
+        raise SystemExit('In App Store Connect, open this app → TestFlight → Internal Testing → Internal Testing and add only the intended tester. Internal tester assignment must be completed in the website.')
     print('Verified a private internal group with exactly the intended sole tester.', flush=True)
     return group
 
@@ -108,7 +89,7 @@ def main():
     if len(apps) != 1:
         raise SystemExit('App Store Connect returned ambiguous app records for dev.makelora.app. Resolve the duplicate records before releasing.')
     app = apps[0]['id']
-    group = sole_tester_group(app)
+    group = sole_tester_group(app, require_tester=False)
     if os.environ.get('CHECK_BUILD_NUMBER_ONLY') == 'true':
         # Inspect uploaded builds before creating an archive or submitting anything.
         path = 'builds?' + urllib.parse.urlencode({'filter[app]': app, 'limit': 200})
@@ -140,6 +121,13 @@ def main():
             if state in ('FAILED', 'INVALID'):
                 raise SystemExit('Apple processing rejected build')
             if state == 'VALID':
+                group = sole_tester_group(app, require_tester=False)
+                testers = all_items('betaGroups/' + group['id'] + '/betaTesters?limit=200')
+                if not testers:
+                    print('Build processed; waiting for the intended tester to be added to the internal group in App Store Connect.', flush=True)
+                    time.sleep(20)
+                    continue
+                group = sole_tester_group(app)
                 detail = request('builds/' + build['id'] + '/buildBetaDetail')['data']['attributes']
                 assigned = request('betaGroups/' + group['id'] + '/builds?limit=200')['data']
                 if not any(item['id'] == build['id'] for item in assigned):
