@@ -1,0 +1,30 @@
+name: Validate iPad app
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Test on an iPad simulator
+        run: |
+          device=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; devices=[d for group in json.load(sys.stdin)["devices"].values() for d in group if "iPad" in d["name"]]; assert devices, "No iPad simulator available"; print(devices[0]["udid"])')
+          xcodebuild test -project MakeLORA.xcodeproj -scheme MakeLORA -destination "platform=iOS Simulator,id=$device" -jobs 2 -parallel-testing-enabled NO -resultBundlePath build/Tests.xcresult CODE_SIGNING_ALLOWED=NO
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: build/Tests.xcresult
+          retention-days: 7

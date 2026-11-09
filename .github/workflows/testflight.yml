@@ -1,0 +1,114 @@
+name: TestFlight
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Unique positive build number
+        required: true
+        type: string
+      upload:
+        description: Upload signed build to TestFlight
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check build number and signing credential availability
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          IOS_DEVELOPMENT_CERT_P12: ${{ secrets.IOS_DEVELOPMENT_CERT_P12 }}
+          IOS_DEVELOPMENT_CERT_PASSWORD: ${{ secrets.IOS_DEVELOPMENT_CERT_PASSWORD }}
+        run: |
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]] || { echo 'Enter a positive build number of at most nine digits.'; exit 1; }
+          missing=0
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY IOS_DEVELOPMENT_CERT_P12 IOS_DEVELOPMENT_CERT_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Add the $name repository secret under Settings > Secrets and variables > Actions. See RELEASE.md."
+              missing=1
+            fi
+          done
+          exit "$missing"
+  release:
+    needs: preflight
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      IOS_TEAM_ID: FKR675M7PM
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      UPLOAD: ${{ inputs.upload }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare existing Apple signing authentication
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          IOS_DEVELOPMENT_CERT_P12: ${{ secrets.IOS_DEVELOPMENT_CERT_P12 }}
+          IOS_DEVELOPMENT_CERT_PASSWORD: ${{ secrets.IOS_DEVELOPMENT_CERT_PASSWORD }}
+        run: |
+          test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID" && test -n "$ASC_PRIVATE_KEY"
+          ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          echo "ASC_KEY_PATH=$ASC_KEY_PATH" >> "$GITHUB_ENV"
+          umask 077
+          printf '%s' "$ASC_PRIVATE_KEY" > "$ASC_KEY_PATH"
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$RUNNER_TEMP/makelora-signing.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/makelora-signing.keychain-db"
+          security unlock-keychain -p "$password" "$RUNNER_TEMP/makelora-signing.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/makelora-signing.keychain-db" login.keychain-db
+          security default-keychain -d user -s "$RUNNER_TEMP/makelora-signing.keychain-db"
+          test -n "$IOS_DEVELOPMENT_CERT_P12" && test -n "$IOS_DEVELOPMENT_CERT_PASSWORD"
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'development.p12').write_bytes(base64.b64decode(os.environ['IOS_DEVELOPMENT_CERT_P12'], validate=True))
+          PY
+          security import "$RUNNER_TEMP/development.p12" -k "$RUNNER_TEMP/makelora-signing.keychain-db" -P "$IOS_DEVELOPMENT_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$RUNNER_TEMP/makelora-signing.keychain-db" >/dev/null
+      - name: Verify build number against App Store Connect
+        run: CHECK_BUILD_NUMBER_ONLY=true python3 scripts/check_testflight.py
+      - run: brew install xcodegen
+      - name: Test the iPad app
+        run: |
+          xcodegen generate
+          device=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if "iPad" in d["name"]))')
+          xcodebuild test -project MakeLORA.xcodeproj -scheme MakeLORA -destination "platform=iOS Simulator,id=$device" -jobs 2 -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO
+      - name: Test, build and sign the iPad app
+        run: bash scripts/testflight.sh
+      - name: Verify Apple processing and existing internal TestFlight access
+        if: ${{ inputs.upload }}
+        run: python3 scripts/check_testflight.py
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.upload }}
+        with:
+          name: MakeLORA-signed
+          path: |
+            build/signed/*.ipa
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save Apple processing evidence
+        if: ${{ always() && inputs.upload }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MakeLORA-TestFlight-processing
+          path: build/testflight-processing.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          security default-keychain -d user -s login.keychain-db || true
+          security delete-keychain "$RUNNER_TEMP/makelora-signing.keychain-db" || true
+          rm -f "$ASC_KEY_PATH" "$RUNNER_TEMP/development.p12"
+
+
