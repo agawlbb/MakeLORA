@@ -64,7 +64,17 @@ struct ProjectSummary: Identifiable {
             project = value; scheduleGeneration()
         } catch { report("Open \(summary.name)", error) }
     }
-    func close() { project = nil }
+    func close() {
+        generation?.cancel()
+        guard let snapshot = project, let directory else { project = nil; return }
+        revision += 1
+        let current = revision
+        project = nil
+        Task {
+            do { try await engine.synchronize(snapshot, directory: directory, revision: current) }
+            catch { report("Update dataset for \(snapshot.name)", error) }
+        }
+    }
     func update(_ edit: (inout Project) -> Void) {
         guard var value = project, let directory else { return }
         edit(&value)

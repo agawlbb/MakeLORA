@@ -18,10 +18,12 @@ jobs:
       - run: swift test
       - run: brew install xcodegen
       - run: xcodegen generate
+      - name: Build iPad app and tests
+        run: xcodebuild build-for-testing -project MakeLORA.xcodeproj -scheme MakeLORA -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData -jobs 2 CODE_SIGNING_ALLOWED=NO
       - name: Test on an iPad simulator
         run: |
           device=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; devices=[d for group in json.load(sys.stdin)["devices"].values() for d in group if "iPad" in d["name"]]; assert devices, "No iPad simulator available"; print(devices[0]["udid"])')
-          xcodebuild test -project MakeLORA.xcodeproj -scheme MakeLORA -destination "platform=iOS Simulator,id=$device" -jobs 2 -parallel-testing-enabled NO -resultBundlePath build/Tests.xcresult CODE_SIGNING_ALLOWED=NO
+          xcodebuild test-without-building -project MakeLORA.xcodeproj -scheme MakeLORA -destination "platform=iOS Simulator,id=$device" -derivedDataPath build/DerivedData -parallel-testing-enabled NO -resultBundlePath build/Tests.xcresult CODE_SIGNING_ALLOWED=NO
       - name: Capture app preview
         run: |
           device=$(xcrun simctl list devices booted -j | python3 -c 'import sys,json; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if "iPad" in d["name"]))')
