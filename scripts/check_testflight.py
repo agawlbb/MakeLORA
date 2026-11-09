@@ -49,6 +49,18 @@ def all_items(path):
     return result
 
 
+def select_tester(candidates, email):
+    # Apple's email filter can return broader matches and duplicate records.
+    matches = [t for t in candidates if (t['attributes'].get('email') or '').strip().casefold() == email]
+    if len(matches) > 1:
+        internal = [t for t in matches if any(g['attributes'].get('isInternalGroup')
+            for g in all_items('betaTesters/' + t['id'] + '/betaGroups?limit=200'))]
+        matches = internal or matches
+    # Every remaining record has the same authorized email address. Prefer an
+    # existing internal identity, then choose deterministically without adding duplicates.
+    return min(matches, key=lambda t: t['id']) if matches else None
+
+
 def sole_tester_group(app):
     email = os.environ['TESTFLIGHT_TESTER_EMAIL'].strip().casefold()
     if not email or '@' not in email:
@@ -74,12 +86,11 @@ def sole_tester_group(app):
     path = 'betaGroups/' + group['id'] + '/betaTesters?limit=200'
     testers = all_items(path)
     if not testers:
-        matches = all_items('betaTesters?' + urllib.parse.urlencode({'filter[email]': email, 'limit': 200}))
-        if len(matches) > 1:
-            raise SystemExit('The intended TestFlight tester is ambiguous in App Store Connect.')
-        if matches:
+        candidates = all_items('betaTesters?' + urllib.parse.urlencode({'filter[email]': email, 'limit': 200}))
+        tester = select_tester(candidates, email)
+        if tester:
             request('betaGroups/' + group['id'] + '/relationships/betaTesters', {
-                'data': [{'type': 'betaTesters', 'id': matches[0]['id']}]})
+                'data': [{'type': 'betaTesters', 'id': tester['id']}]})
         else:
             request('betaTesters', {'data': {'type': 'betaTesters', 'attributes': {'email': email},
                 'relationships': {'betaGroups': {'data': [{'type': 'betaGroups', 'id': group['id']}]}}}})

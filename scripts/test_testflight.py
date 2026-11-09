@@ -52,6 +52,21 @@ class SoleTesterTests(unittest.TestCase):
             self.assertEqual(release.sole_tester_group('app')['id'], 'group')
             self.assertTrue(assigned)
 
+    def test_email_filter_must_match_exact_address(self):
+        other = {'id': 'other', 'attributes': {'email': 'not-tester@example.invalid'}}
+        self.assertEqual(release.select_tester([other, self.tester], 'tester@example.invalid'), self.tester)
+        self.assertIsNone(release.select_tester([other], 'tester@example.invalid'))
+
+    def test_duplicate_email_prefers_existing_internal_tester(self):
+        external = {'id': 'a-external', 'attributes': {'email': 'tester@example.invalid'}}
+        with patch.object(release, 'all_items', side_effect=[[], [self.group]]):
+            self.assertEqual(release.select_tester([external, self.tester], 'tester@example.invalid'), self.tester)
+
+    def test_duplicate_internal_records_select_only_one_identity(self):
+        second = {'id': 'z-second', 'attributes': {'email': 'TESTER@example.invalid'}}
+        with patch.object(release, 'all_items', return_value=[self.group]):
+            self.assertEqual(release.select_tester([second, self.tester], 'tester@example.invalid'), self.tester)
+
 
 if __name__ == '__main__':
     unittest.main()
