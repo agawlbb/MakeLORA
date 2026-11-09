@@ -85,4 +85,3 @@ while time.monotonic() < deadline:
     time.sleep(20)
 else:
     raise SystemExit('Apple processing has not completed within 20 minutes')
-

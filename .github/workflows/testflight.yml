@@ -110,5 +110,3 @@ jobs:
           security default-keychain -d user -s login.keychain-db || true
           security delete-keychain "$RUNNER_TEMP/makelora-signing.keychain-db" || true
           rm -f "$ASC_KEY_PATH" "$RUNNER_TEMP/development.p12"
-
-
