@@ -92,7 +92,10 @@ def sole_tester_group(app):
 
 def main():
     apps = request('apps?' + urllib.parse.urlencode({'filter[bundleId]': 'dev.makelora.app'}))['data']
-    assert len(apps) == 1, 'MakeLORA App Store Connect app missing or ambiguous'
+    if not apps:
+        raise SystemExit('No accessible App Store Connect app record for dev.makelora.app. Create the iOS app MakeLORA at https://appstoreconnect.apple.com/apps with bundle ID dev.makelora.app and SKU MakeLORA, grant the intended tester app access, then rerun this workflow. Apple requires the website for creating app records.')
+    if len(apps) != 1:
+        raise SystemExit('App Store Connect returned ambiguous app records for dev.makelora.app. Resolve the duplicate records before releasing.')
     app = apps[0]['id']
     group = sole_tester_group(app)
     if os.environ.get('CHECK_BUILD_NUMBER_ONLY') == 'true':

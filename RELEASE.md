@@ -9,7 +9,7 @@ The workflows follow [FanControlWatch](https://github.com/agawlbb/FanControlWatc
 
 ## One-time setup
 
-Register this bundle identifier and create its iOS app record in App Store Connect under the existing team. The release script creates a private internal group if needed, adds the configured sole tester, and verifies that no other testers or public links can receive the build. The tester must be an existing App Store Connect user with access to this app. Complete any outstanding Apple agreements.
+Register this bundle identifier in Apple Developer → Certificates, Identifiers & Profiles → Identifiers. At [App Store Connect → Apps](https://appstoreconnect.apple.com/apps), choose **+ → New App** and use platform **iOS**, name **MakeLORA**, primary language **English (U.S.)**, bundle ID **dev.makelora.app**, and SKU **MakeLORA**. Apple requires its website for creating app records; API keys cannot perform this initial step. Give the intended tester access to this app. The release script creates a private internal group if needed, adds the configured sole tester, and verifies that no other testers or public links can receive the build. The tester must be an existing App Store Connect user with access to this app. Complete any outstanding Apple agreements.
 
 Add these Actions secrets to MakeLORA, reusing the original private credentials used by FanControlWatch:
 
@@ -35,3 +35,7 @@ Run **TestFlight** manually with a positive, unused build number. Leave **Upload
 Enable upload only for an intended release. The workflow runs tests, archives, exports and verifies the distribution signature, uploads to Apple, waits for processing, and assigns/verifies the build in the existing internal group. Processing evidence is retained for seven days. It does not add testers or submit to the public App Store.
 
 Temporary signing files and the runner keychain are removed at cleanup. If upload succeeds but processing verification fails, inspect App Store Connect before rerunning; the build number may already be used.
+
+## Certificate package compatibility
+
+A correct PKCS12 password can still produce macOS's “MAC verification failed” error when the package was exported with OpenSSL 3's default encryption. Re-export the existing certificate and private key using `PBE-SHA1-3DES` for both key and certificate encryption and `sha1` for the package MAC, then update `IOS_DEVELOPMENT_CERT_P12` with the new base64 package. Keep private files outside Git. This changes the package format only; do not create or revoke a certificate to solve this import error.
