@@ -39,3 +39,7 @@ Temporary signing files and the runner keychain are removed at cleanup. If uploa
 ## Certificate package compatibility
 
 A correct PKCS12 password can still produce macOS's “MAC verification failed” error when the package was exported with OpenSSL 3's default encryption. Re-export the existing certificate and private key using `PBE-SHA1-3DES` for both key and certificate encryption and `sha1` for the package MAC, then update `IOS_DEVELOPMENT_CERT_P12` with the new base64 package. Keep private files outside Git. This changes the package format only; do not create or revoke a certificate to solve this import error.
+
+## Verify an existing upload
+
+If upload succeeds but processing or group verification fails, rerun **TestFlight** with the same build number and **Verify an existing upload without building or uploading** enabled. This skips compilation, signing, the unused-build-number check and upload, and reports internal group membership counts without publishing tester emails. A populated private internal group for the sole intended tester takes precedence over an empty default group.

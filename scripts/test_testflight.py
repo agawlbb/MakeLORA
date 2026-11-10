@@ -6,7 +6,7 @@ import check_testflight as release
 
 class SoleTesterTests(unittest.TestCase):
     def setUp(self):
-        self.environment = patch.dict(os.environ, {'TESTFLIGHT_TESTER_EMAIL': 'tester@example.invalid'})
+        self.environment = patch.dict(os.environ, {'TESTFLIGHT_TESTER_EMAIL': 'tester@example.invalid', 'VERIFY_EXISTING': 'false'})
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.group = {'id': 'group', 'attributes': {'name': 'Internal Testing', 'isInternalGroup': True, 'publicLinkEnabled': False}}
@@ -57,6 +57,15 @@ class SoleTesterTests(unittest.TestCase):
             return {'data': []}
         with patch.object(release, 'request', side_effect=api):
             self.assertEqual(release.sole_tester_group('app', require_tester=False), self.group)
+
+    def test_populated_internal_group_preferred_over_empty_named_group(self):
+        populated = {'id': 'populated', 'attributes': {'name': 'Other internal group', 'isInternalGroup': True, 'publicLinkEnabled': False}}
+        def api(path, body=None):
+            self.assertIsNone(body)
+            if path.startswith('apps/'): return {'data': [self.group, populated]}
+            return {'data': [self.tester] if '/populated/' in path else []}
+        with patch.object(release, 'request', side_effect=api):
+            self.assertEqual(release.sole_tester_group('app'), populated)
 
 
 if __name__ == '__main__':

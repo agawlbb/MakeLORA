@@ -54,15 +54,24 @@ def sole_tester_group(app, require_tester=True):
     if not email or '@' not in email:
         raise SystemExit('Set TESTFLIGHT_TESTER_EMAIL to the intended sole tester before releasing.')
     groups = all_items('apps/' + app + '/betaGroups?limit=200')
+    memberships = {}
     for group in groups:
         if group['attributes'].get('publicLinkEnabled'):
             raise SystemExit('Disable public TestFlight links for this app before releasing to the sole tester.')
         testers = all_items('betaGroups/' + group['id'] + '/betaTesters?limit=200')
+        memberships[group['id']] = testers
+        if os.environ.get('VERIFY_EXISTING') == 'true':
+            links = all_items('betaGroups/' + group['id'] + '/relationships/betaTesters?limit=200')
+            print(json.dumps({'group_id': group['id'], 'internal': group['attributes'].get('isInternalGroup'), 'tester_count': len(testers), 'linked_tester_count': len(links)}), flush=True)
         if any(t['attributes']['email'].casefold() != email for t in testers):
             raise SystemExit("Remove other testers from this app's TestFlight groups before releasing. Other apps must remain unchanged.")
     internal = [g for g in groups if g['attributes'].get('isInternalGroup')]
     named = [g for g in internal if g['attributes']['name'].casefold() == 'internal testing']
-    chosen = named if len(named) == 1 else internal
+    populated = [g for g in internal if len(memberships[g['id']]) == 1]
+    preferred = [g for g in populated if g in named]
+    chosen = preferred or populated or named or internal
+    if populated:
+        chosen = [min(chosen, key=lambda g: g['id'])]
     if not chosen:
         group = request('betaGroups', {'data': {'type': 'betaGroups', 'attributes': {
             'name': 'Internal Testing', 'isInternalGroup': True, 'publicLinkEnabled': False,
@@ -124,6 +133,8 @@ def main():
                 group = sole_tester_group(app, require_tester=False)
                 testers = all_items('betaGroups/' + group['id'] + '/betaTesters?limit=200')
                 if not testers:
+                    if os.environ.get('VERIFY_EXISTING') == 'true':
+                        raise SystemExit('Build processing is VALID, but the API reports no tester in the selected internal group. Review the group membership diagnostics above; no upload was attempted.')
                     print('Build processed; waiting for the intended tester to be added to the internal group in App Store Connect.', flush=True)
                     time.sleep(20)
                     continue
@@ -151,7 +162,7 @@ def main():
                 break
         time.sleep(20)
     else:
-        raise SystemExit('Apple processing has not completed within 20 minutes')
+        raise SystemExit('TestFlight verification did not complete within 20 minutes; last processing state: ' + str(last) + '. Check processing and internal group membership before retrying verification of this existing build.')
 
 
 if __name__ == '__main__':

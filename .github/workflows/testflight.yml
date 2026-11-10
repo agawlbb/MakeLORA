@@ -6,6 +6,10 @@ on:
         description: Unique positive build number
         required: true
         type: string
+      verify_only:
+        description: Verify an existing upload without building or uploading
+        type: boolean
+        default: false
       upload:
         description: Upload signed build to TestFlight
         type: boolean
@@ -49,6 +53,7 @@ jobs:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       BUILD_NUMBER: ${{ inputs.build_number }}
       UPLOAD: ${{ inputs.upload }}
+      VERIFY_EXISTING: ${{ inputs.verify_only }}
     steps:
       - uses: actions/checkout@v4
       - name: Prepare existing Apple signing authentication
@@ -79,20 +84,24 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$RUNNER_TEMP/makelora-signing.keychain-db" >/dev/null
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Verify build number against App Store Connect
+        if: ${{ !inputs.verify_only }}
         run: CHECK_BUILD_NUMBER_ONLY=true python3 scripts/check_testflight.py
-      - run: brew install xcodegen
+      - if: ${{ !inputs.verify_only }}
+        run: brew install xcodegen
       - name: Test the iPad app
+        if: ${{ !inputs.verify_only }}
         run: |
           xcodegen generate
           device=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if "iPad" in d["name"]))')
           xcodebuild test -project MakeLORA.xcodeproj -scheme MakeLORA -destination "platform=iOS Simulator,id=$device" -jobs 2 -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO
       - name: Test, build and sign the iPad app
+        if: ${{ !inputs.verify_only }}
         run: bash scripts/testflight.sh
       - name: Verify Apple processing and existing internal TestFlight access
-        if: ${{ inputs.upload }}
+        if: ${{ inputs.upload || inputs.verify_only }}
         run: python3 scripts/check_testflight.py
       - uses: actions/upload-artifact@v4
-        if: ${{ !inputs.upload }}
+        if: ${{ !inputs.upload && !inputs.verify_only }}
         with:
           name: MakeLORA-signed
           path: |
@@ -100,7 +109,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Save Apple processing evidence
-        if: ${{ always() && inputs.upload }}
+        if: ${{ always() && (inputs.upload || inputs.verify_only) }}
         uses: actions/upload-artifact@v4
         with:
           name: MakeLORA-TestFlight-processing
