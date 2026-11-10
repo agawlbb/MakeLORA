@@ -147,7 +147,12 @@ def main():
                 assert any(item['id'] == build['id'] for item in assigned), 'Internal group assignment not confirmed'
                 email = os.environ['TESTFLIGHT_TESTER_EMAIL'].strip().casefold()
                 recipients = all_items('builds/' + build['id'] + '/individualTesters?limit=200')
-                for assigned_group in all_items('builds/' + build['id'] + '/betaGroups?limit=200'):
+                # Apple doesn't support GET_RELATED on build.betaGroups.
+                # Read each app group's builds to verify the reverse relationship.
+                for assigned_group in all_items('apps/' + app + '/betaGroups?limit=200'):
+                    group_builds = all_items('betaGroups/' + assigned_group['id'] + '/builds?limit=200')
+                    if not any(item['id'] == build['id'] for item in group_builds):
+                        continue
                     if assigned_group['attributes'].get('publicLinkEnabled'):
                         raise SystemExit('The uploaded build has an unintended public testing link.')
                     recipients.extend(all_items('betaGroups/' + assigned_group['id'] + '/betaTesters?limit=200'))
