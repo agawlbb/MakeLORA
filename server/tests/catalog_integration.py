@@ -24,6 +24,7 @@ before = rows()
 assert len(before) == 1
 row = before[0]
 assert row['original_name'] == 'addminus.safetensors'
+assert row['display_name'] == 'add minus glasses'
 assert row['target_model'] == 'Qwen/Qwen-Image-Edit-2509'
 assert int(row['size_bytes']) == 590058832
 scan = json.loads(row['inspection_json'])
@@ -42,14 +43,52 @@ assert len(after) == 1
 assert after[0]['original_name'] == row['original_name']
 assert after[0]['imported_at'] == row['imported_at']
 assert after[0]['target_model'] == row['target_model']
+assert after[0]['display_name'] == row['display_name']
 with urllib.request.urlopen(BASE + '/', timeout=30) as response:
     page = response.read().decode()
     assert 'no-store' in response.headers['Cache-Control'].split(', ')
 for expected in ['addminus.safetensors', DIGEST, 'qwen_image', 'BF16',
-                 'Qwen/Qwen-Image-Edit-2509', 'Target model (user specified)',
-                 '1,680', '294,912,000', 'Downloads are not enabled',
-                 'Unknown — not recorded in the file']:
+                 'Qwen/Qwen-Image-Edit-2509', 'add minus glasses',
+                 '1,680', '294,912,000']:
     assert expected in page, expected
+from html.parser import HTMLParser
+
+
+class CatalogMarkup(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.in_row = False
+        self.row_text = []
+        self.closed_files = 0
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'details' and attrs.get('class') == 'file':
+            assert 'open' not in attrs
+            self.closed_files += 1
+        if tag == 'summary' and attrs.get('class') == 'file-row':
+            self.in_row = True
+
+    def handle_endtag(self, tag):
+        if tag == 'summary':
+            self.in_row = False
+
+    def handle_data(self, text):
+        if self.in_row:
+            self.row_text.append(text)
+
+
+markup = CatalogMarkup()
+markup.feed(page)
+assert markup.closed_files >= 1
+summary = ' '.join(markup.row_text)
+assert 'add minus glasses' in summary
+assert row['imported_at'][:16] in summary
+assert 'Qwen-Image-Edit-2509' in summary
+assert 'addminus.safetensors' not in summary
+for removed in ['VM prototype', 'Downloads are not enabled', 'not proof of provenance',
+                'user specified', 'not recorded in the file', 'Identification']:
+    assert removed not in page, removed
 assert 'href="' + row['storage_key'] not in page
 for path in ['/storage/files/' + row['storage_key'],
              '/files/' + row['storage_key'], '/addminus.safetensors']:

@@ -91,7 +91,7 @@ Apply `schema.sql` to the existing VM test database before updating the page.
 Then import a local file from inside development:
 
 ```sh
-dev bash -lc 'cd /home/dev/projects/MakeLORA && php server/bin/import-file.php /path/to/model.safetensors'
+dev bash -lc 'cd /home/dev/projects/MakeLORA && php server/bin/import-file.php /path/to/model.safetensors "Display name"'
 ```
 
 The CLI defaults to the VM `.test-config/makelora.php`; `MAKELORA_CONFIG` can
@@ -99,19 +99,22 @@ select another private **prototype** configuration. It snapshots the source,
 validates bounded header structure, tensor byte lengths and offsets, calculates
 a full-file SHA-256, and stores a private content-addressed copy with mode 0600.
 Reimporting identical bytes updates the inspection without creating another row
-or replacing the first original filename/import date. The source is left intact;
+or replacing the display name, target model, original filename or upload date.
+Different files with the same source filename receive distinct hash-based storage
+names automatically, so uploads cannot overwrite each other. Display names
+default to the source filename stem when the optional label is omitted. The source is left intact;
 remove staging copies only after checking the stored copy and database record.
 If database registration fails after storage is finalized, retry the import;
 the already verified stored copy is reused. No source file is executed and no
 model/GPU runtime is required. PHP CLI and Python 3 are required for import;
 Python is not needed by the web process.
 
-The database retains the original filename, byte size, SHA-256, timestamps,
-scanner version, embedded metadata and complete tensor descriptors. The page
-shows type, declared model family/checkpoint, tensor/parameter counts, data types,
-LoRA ranks and metadata. Family/checkpoint metadata is labeled as a declaration,
-not a verified compatibility guarantee. Missing metadata remains unknown; there
-is no architecture signature catalog or external model lookup yet. The scanner
+The database retains display names, original filenames, byte sizes, SHA-256,
+timestamps, scanner versions, embedded metadata and complete tensor descriptors.
+The catalog shows one collapsed row per file: display name, upload time (UTC)
+and target model. Tapping the row reveals the original filename and technical
+attributes. Device management is also collapsed. There is no architecture
+signature catalog or external model lookup yet. The scanner
 currently rejects unsupported dtypes (including packed/quantized types) rather
 than guessing. Inspections validate the container, not model quality or behavior.
 
@@ -128,3 +131,11 @@ User-specified target models are stored in `makelora_files.target_model`,
 shown separately from embedded metadata, and preserved on reimport. Existing
 catalog databases must apply `migrations/002_file_target_model.sql` before
 updating the page; new databases include the column in `schema.sql`.
+
+Display names are stored in `makelora_files.display_name`. Existing databases
+must also apply `migrations/003_file_display_name.sql` before updating the page.
+The initial file is named “add minus glasses”. Verify filename collisions with:
+
+```sh
+dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 server/tests/import_integration.py'
+```

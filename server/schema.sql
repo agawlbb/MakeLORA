@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS makelora_devices (
 CREATE TABLE IF NOT EXISTS makelora_files (
  sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
  original_name VARCHAR(255) NOT NULL,
+ display_name VARCHAR(255) NOT NULL,
  storage_key VARCHAR(80) NOT NULL UNIQUE,
  target_model VARCHAR(255) NULL,
  size_bytes BIGINT UNSIGNED NOT NULL,

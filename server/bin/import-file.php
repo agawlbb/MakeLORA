@@ -2,7 +2,9 @@
 // CLI only. Storage is outside the web document root; no download route exists.
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
-if ($argc !== 2 || !is_file($argv[1])) { fwrite(STDERR,"Usage: php server/bin/import-file.php FILE\n"); exit(1); }
+if (!in_array($argc,[2,3],true) || !is_file($argv[1])) { fwrite(STDERR,"Usage: php server/bin/import-file.php FILE [DISPLAY_NAME]\n"); exit(1); }
+$displayName=trim($argv[2] ?? str_replace(['_','-'],' ',pathinfo($argv[1],PATHINFO_FILENAME)));
+if ($displayName === '' || preg_match('//u',$displayName)!==1 || strlen($displayName)>255) { throw new InvalidArgumentException('Display name must be valid UTF-8 and 1–255 bytes'); }
 $config = require (getenv('MAKELORA_CONFIG') ?: '/home/dev/projects/.test-config/makelora.php');
 if (($config['environment'] ?? '') !== 'prototype') { throw new RuntimeException('VM prototype configuration required'); }
 $root = dirname(__DIR__).'/storage/files';
@@ -26,7 +28,7 @@ try {
     } elseif (!rename($temp,$destination)) { throw new RuntimeException('Cannot finalize storage'); }
     $db=new PDO($config['dsn'],$config['user'],$config['password'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_EMULATE_PREPARES=>false]);
     $tensors=json_encode($scan['tensors'],JSON_THROW_ON_ERROR); unset($scan['tensors']);
-    $sql='INSERT INTO makelora_files (sha256,original_name,storage_key,size_bytes,inspection_json,tensors_json,imported_at,inspected_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE inspection_json=VALUES(inspection_json),tensors_json=VALUES(tensors_json),inspected_at=UTC_TIMESTAMP()';
-    $db->prepare($sql)->execute([$scan['sha256'],basename($argv[1]),$key,$scan['size_bytes'],json_encode($scan,JSON_THROW_ON_ERROR),$tensors]);
+    $sql='INSERT INTO makelora_files (sha256,original_name,display_name,storage_key,size_bytes,inspection_json,tensors_json,imported_at,inspected_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE inspection_json=VALUES(inspection_json),tensors_json=VALUES(tensors_json),inspected_at=UTC_TIMESTAMP()';
+    $db->prepare($sql)->execute([$scan['sha256'],basename($argv[1]),$displayName,$key,$scan['size_bytes'],json_encode($scan,JSON_THROW_ON_ERROR),$tensors]);
     echo json_encode($scan,JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR)."\n";
 } finally { if (is_file($temp)) { unlink($temp); } }
