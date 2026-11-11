@@ -6,6 +6,15 @@ import MakeLORACore
 private let accent = Color(red: 0.70, green: 0.91, blue: 0.43)
 
 struct RootView: View {
+    var body: some View {
+        TabView {
+            DatasetView().tabItem { Label("Datasets", systemImage: "rectangle.stack") }
+            GenerationView().tabItem { Label("Generation", systemImage: "sparkles") }
+        }.tint(accent)
+    }
+}
+
+struct DatasetView: View {
     @EnvironmentObject private var store: ProjectStore
     @Environment(\.scenePhase) private var phase
     @State private var serverSettings = false

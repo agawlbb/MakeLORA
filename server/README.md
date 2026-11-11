@@ -128,3 +128,40 @@ Firebase cookies, sign-in return paths, authorized management, CSRF rejection,
 private path denial, model checksum, token preservation, and device pairing/status
 through both the current and compatibility API URLs. Remove temporary test rows
 and credentials afterwards. No iOS build/release is part of a server deployment.
+
+
+## Mobile generation
+
+Apply `migrations/004_generations.sql` to the server database before deploying
+this version (new installations include it in `schema.sql`). PHP requires cURL
+and outbound HTTPS access to `api.replicate.com`. The saved server-side Replicate
+token is reused; no provider credential is returned to a device.
+
+Active devices can GET `api.php?action=models`, POST `action=generate` with
+`model` (catalog SHA-256), `image` (JPEG data URI), `prompt`, `aspect_ratio`,
+`lora_scale` and optional integer `seed`, then GET `action=prediction&id=...`.
+Only the device that submitted a prediction can poll it. Current supported base
+models are `Qwen/Qwen-Image-Edit-2509` and `Qwen-Image-Edit-2509`; other catalog
+entries remain visible with generation disabled. JPG output and disabled safety
+checking are supplied server-side. Provider requests use the fixed
+`qwen/qwen-image-edit-plus-lora` endpoint. Status and logs are passed to the app;
+outputs are downloaded and retained locally by the app, not archived by PHP.
+
+The provider receives a one-hour signed URL to download the selected private
+weight via `action=weights`. This scoped URL authorizes only that file, reveals
+no device/provider token, and becomes invalid if the provider token changes.
+Keep `base_url` publicly reachable over HTTPS, allow large responses and image
+requests up to 16 MB through the frontend, and keep private weight storage
+outside the document root. Revoking a device stops further API requests; an
+already-issued signed weight URL remains valid until expiry. Provider retention
+limits still apply if the app cannot retrieve outputs promptly. If submission
+loses its response before a job ID reaches the device, check Replicate before
+retrying to avoid starting a duplicate paid prediction.
+
+Run offline generation API checks inside development:
+
+```sh
+php -n server/tests/generation.php
+```
+
+No migration, deployment or paid prediction is started by these tests.

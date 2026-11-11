@@ -1,1 +1,1 @@
-{"require":{"php":"^8.2","ext-pdo":"*","ext-pdo_mysql":"*","bacon/bacon-qr-code":"^3.0"}}
+{"require":{"php":"^8.2","ext-pdo":"*","ext-pdo_mysql":"*","bacon/bacon-qr-code":"^3.0","ext-curl":"*"}}

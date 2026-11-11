@@ -15,7 +15,7 @@ struct PairingReply: Decodable {
     let token: String?
 }
 private struct ServiceError: Decodable { let error: String }
-private final class NoPairingRedirects: NSObject, URLSessionTaskDelegate {
+final class NoPairingRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 

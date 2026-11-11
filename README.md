@@ -51,6 +51,20 @@ check status in the app. Connections are saved in device-only Keychain storage.
 The management website at https://vps.coffeybean.com/MakeLORA/ uses the existing
 VPS sign-in. It lists privately stored model files and inspection metadata and
 stores a persistent Replicate token for server-side paired-device operations.
-Downloads and model runs are not yet implemented; dataset preparation remains
-offline. Future server deployments target the VPS unless explicitly requested
+The **Datasets** and **Generation** tabs switch between dataset preparation and
+image generation. Generation lists server weights by display name and base model.
+Tap a weight for metadata, then **Use model to generate**. Qwen Image Edit 2509
+weights are supported through Replicate’s `qwen/qwen-image-edit-plus-lora` endpoint.
+Choose a photo or file and enter an editing prompt. Inputs are oriented, flattened
+to JPG and resized to at most 2048 pixels on the longest side before upload.
+Aspect ratio defaults to `match_input_image`, LoRA scale to 1, seed to random
+(blank), output to JPG, and `disable_safety_checker` to true. The server uses its
+saved Replicate token; the app never receives that token.
+
+Status and available provider logs update while generating. Pending job metadata
+is saved on device; reopen Generation or tap Resume after an interrupted update
+to retrieve results while the provider still retains them. All returned images
+are saved in the device’s Application Support gallery. Tap for a larger image,
+the iOS share sheet, or removal. Gallery files are eligible for normal device
+backup; deleting the app removes them. Dataset preparation remains offline. Future server deployments target the VPS unless explicitly requested
 otherwise. See [server operations](server/README.md).

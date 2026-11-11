@@ -4,6 +4,8 @@ define('MAKELORA_DEVICE_API', true);
 require dirname(__DIR__).'/src/bootstrap.php';
 try {
     $action = $_GET['action'] ?? '';
+    require_once dirname(__DIR__).'/src/generation.php';
+    if ($action==='weights' && $_SERVER['REQUEST_METHOD']==='GET') serveWeights();
     if ($action === 'redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 4096) fail('Request too large.',413);
         $raw = file_get_contents('php://input', false, null, 0, 4097);
@@ -34,6 +36,7 @@ try {
     if ($action==='disconnect' && $_SERVER['REQUEST_METHOD']==='POST') {
         query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[$row['id']]); jsonResponse(['status'=>'revoked']);
     }
+    if (in_array($action,['models','generate','prediction'],true)) generationAPI($action,$row);
     fail('Unknown operation or method.',405);
 } catch (JsonException|TypeError $e) { fail('Invalid request.'); }
 catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); error_log('MakeLORA pairing failure: '.get_class($e)); fail('Pairing service unavailable.',503); }
