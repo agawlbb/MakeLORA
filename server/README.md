@@ -44,6 +44,37 @@ redirects. No server address or credential is embedded in the app.
 
 ## API
 
+### Replicate token storage
+
+The frontend accepts a Replicate API token through a password field and shows
+only saved/absent status afterwards. Save and remove require the management
+session's CSRF token. Tokens are never returned in HTML or device API responses,
+and this feature makes no Replicate requests or jobs.
+
+Before enabling it, create a directory outside every Git checkout and web
+document root, owned by the PHP runtime user with mode **0700**, and set
+`private_session_directory` in the private settings file to its absolute path.
+For example use `/var/lib/makelora/private-sessions`, never `server/public` or
+any web alias. The application refuses missing, permissive, or in-repository
+directories. PHP's file session handler writes mode **0600** files there.
+Do not add this directory to public hosting, source control, or request-body logs.
+Treat any separately arranged backups as containing credentials.
+
+This open prototype has no user accounts: tokens belong to individual browser
+sessions, not the shared management page or paired devices. Removing a token
+rewrites that session without it; revoke it at Replicate too if revocation is
+needed. Losing the session cookie loses access to its saved token. Configure
+normal PHP session garbage collection for this private directory to remove
+expired sessions; session lifetime follows the server's PHP settings. Changing
+the directory also starts fresh management sessions. Shared sign-in is still
+required before production deployment.
+
+Verify storage permissions, session isolation and removal inside development:
+
+```sh
+dev php /home/dev/projects/MakeLORA/server/tests/private_session.php
+```
+
 All responses are JSON with no-store caching. Errors contain `error`.
 
 - `POST api.php?action=redeem`: JSON `invitation`, `name` (1–100 characters).

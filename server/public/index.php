@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require dirname(__DIR__).'/src/bootstrap.php';
+require dirname(__DIR__).'/src/private-session.php';
+$privateSession = configurePrivateSession($config['private_session_directory'] ?? null);
 ini_set('session.use_strict_mode','1');
 session_name('makelora_management');
 session_set_cookie_params(['secure'=>true,'httponly'=>true,'samesite'=>'Strict','path'=>parse_url($config['base_url'],PHP_URL_PATH) ?: '/']);
@@ -9,7 +11,17 @@ $_SESSION['csrf'] ??= bin2hex(random_bytes(32));
 if ($_SERVER['REQUEST_METHOD']==='POST') {
     if (!hash_equals($_SESSION['csrf'],(string)($_POST['csrf'] ?? ''))) { http_response_code(403); exit('Reload the page and try again.'); }
     $action=$_POST['action'] ?? '';
-    if ($action==='invite') {
+    if ($action==='save_replicate' || $action==='remove_replicate') {
+        if (!$privateSession) { http_response_code(503); exit('Private token storage is not configured.'); }
+        if ($action==='remove_replicate') {
+            unset($_SESSION['replicate_token']);
+            $_SESSION['token_notice']='Replicate token removed.';
+        } elseif (saveReplicateToken($_POST['replicate_token'] ?? null)) {
+            $_SESSION['token_notice']='Replicate token saved.';
+        } else {
+            $_SESSION['token_notice']='Enter a token of 1–512 characters without spaces.';
+        }
+    } elseif ($action==='invite') {
         $secret=bin2hex(random_bytes(32));
         query('INSERT INTO makelora_invites (id,expires_at) VALUES (?,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 5 MINUTE))',[hash('sha256',$secret)]);
         $_SESSION['invite']=['secret'=>$secret,'expires'=>time()+300];
@@ -32,8 +44,25 @@ if ($invite && $invite['expires']>time()) {
 }
 $devices=query('SELECT * FROM makelora_devices ORDER BY created_at DESC')->fetchAll();
 $files=query('SELECT sha256, original_name, display_name, size_bytes, target_model, inspection_json, imported_at FROM makelora_files ORDER BY imported_at DESC, sha256')->fetchAll();
+$tokenNotice=$_SESSION['token_notice'] ?? null;
+unset($_SESSION['token_notice']);
 ?><!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MakeLORA server</title><link rel="stylesheet" href="style.css"><main>
 <h1>MakeLORA</h1>
+<section aria-labelledby="replicate-heading">
+<h2 id="replicate-heading">Replicate API token</h2>
+<?php if ($tokenNotice): ?><p role="status"><?=escape($tokenNotice)?></p><?php endif ?>
+<?php if (!$privateSession): ?><p>Private token storage is not configured on this server.</p>
+<?php elseif (isset($_SESSION['replicate_token'])): ?>
+<p>A token is saved for this browser session. It will not be displayed.</p>
+<form method="post"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>"><button name="action" value="remove_replicate">Remove token</button></form>
+<?php else: ?>
+<p>No token saved. Your token is stored privately on the server for this browser session. Other browsers cannot manage it. Closing or clearing your session may lose access; remove it here first.</p>
+<form method="post" autocomplete="off"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>">
+<label for="replicate-token">API token</label>
+<input id="replicate-token" name="replicate_token" type="password" required maxlength="512" autocomplete="off" spellcheck="false" autocapitalize="none">
+<button name="action" value="save_replicate">Save token</button></form>
+<?php endif ?>
+</section>
 <div class="catalog">
 <?php if (!$files): ?><p>No files yet.</p><?php endif ?>
 <?php foreach ($files as $file): $scan=json_decode($file['inspection_json'],true,512,JSON_THROW_ON_ERROR); ?>
