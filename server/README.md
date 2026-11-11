@@ -2,6 +2,7 @@
 
 PHP 8.2+ and MariaDB. The management page is intentionally open on the VM. Device
 credentials grant only status/disconnect access; there are no file/provider APIs.
+The open management page lists the private VM file catalog described below.
 Do not enable this open management mode for a service with real privileges.
 
 Install dependencies inside development:
@@ -65,7 +66,7 @@ Run the following only against the VM prototype:
 dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 server/tests/integration.py https://vm.coffeybean.com/makelora'
 ```
 
-The test It creates temporary devices, removes those device rows, and leaves
+The test creates temporary devices, removes those device rows, and leaves
 short-lived invitation rows. Swift invitation tests run with the existing package
 CI. QR camera/Keychain checks need a physical iPad and a separately requested iOS
 build; no build or release is part of this change.
@@ -76,3 +77,49 @@ redirect authentication. Add a directory link, configure the production database
 and enforce authentication before enabling production mode. Do not copy VM
 credentials or paired-device records to production. No Firebase setup is needed
 for this VM prototype.
+
+## Private file catalog (VM only)
+
+The management page also lists imported safetensors files and their detected
+attributes. There is no download/upload HTTP endpoint and device tokens cannot
+access files. Binary files live in ignored `server/storage/files/`, outside
+`server/public`; never alias or mount that storage into a public document root.
+Storage is on the VM disk, not in Git. Include it and the catalog table in any
+separately arranged data backup; committing source does not back up model files.
+
+Apply `schema.sql` to the existing VM test database before updating the page.
+Then import a local file from inside development:
+
+```sh
+dev bash -lc 'cd /home/dev/projects/MakeLORA && php server/bin/import-file.php /path/to/model.safetensors'
+```
+
+The CLI defaults to the VM `.test-config/makelora.php`; `MAKELORA_CONFIG` can
+select another private **prototype** configuration. It snapshots the source,
+validates bounded header structure, tensor byte lengths and offsets, calculates
+a full-file SHA-256, and stores a private content-addressed copy with mode 0600.
+Reimporting identical bytes updates the inspection without creating another row
+or replacing the first original filename/import date. The source is left intact;
+remove staging copies only after checking the stored copy and database record.
+If database registration fails after storage is finalized, retry the import;
+the already verified stored copy is reused. No source file is executed and no
+model/GPU runtime is required. PHP CLI and Python 3 are required for import;
+Python is not needed by the web process.
+
+The database retains the original filename, byte size, SHA-256, timestamps,
+scanner version, embedded metadata and complete tensor descriptors. The page
+shows type, declared model family/checkpoint, tensor/parameter counts, data types,
+LoRA ranks and metadata. Family/checkpoint metadata is labeled as a declaration,
+not a verified compatibility guarantee. Missing metadata remains unknown; there
+is no architecture signature catalog or external model lookup yet. The scanner
+currently rejects unsupported dtypes (including packed/quantized types) rather
+than guessing. Inspections validate the container, not model quality or behavior.
+
+```sh
+dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 -m unittest discover -s server/tests -p "test_*.py"'
+# After importing the initial addminus.safetensors file:
+dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 server/tests/catalog_integration.py'
+```
+
+This remains a VM prototype. Production hosting and authenticated file serving
+require separate work and authorization.

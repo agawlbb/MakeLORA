@@ -18,3 +18,5 @@ secrets/
 *.xcarchive/
 /server/vendor/
 /server/settings.php
+/server/storage/
+__pycache__/

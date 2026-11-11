@@ -13,3 +13,13 @@ CREATE TABLE IF NOT EXISTS makelora_devices (
  expires_at DATETIME NOT NULL,
  last_seen_at DATETIME NULL
 );
+CREATE TABLE IF NOT EXISTS makelora_files (
+ sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+ original_name VARCHAR(255) NOT NULL,
+ storage_key VARCHAR(80) NOT NULL UNIQUE,
+ size_bytes BIGINT UNSIGNED NOT NULL,
+ inspection_json LONGTEXT NOT NULL CHECK (JSON_VALID(inspection_json)),
+ tensors_json LONGTEXT NOT NULL CHECK (JSON_VALID(tensors_json)),
+ imported_at DATETIME NOT NULL,
+ inspected_at DATETIME NOT NULL
+);

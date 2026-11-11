@@ -46,5 +46,6 @@ Licensed under the repository's GPL license. Release scripts and workflow struct
 Projects → **Server** can scan or paste a pairing invitation from a configured
 HTTPS pairing service. Confirm the matching code on its management page, then
 check status in the app. Connections are saved in device-only Keychain storage.
-Pairing is currently a prototype and grants no tensor storage or model-run
-access; dataset preparation remains offline. See [pairing service](server/README.md).
+Pairing is currently a prototype and grants no file or model-run access. The
+VM management page also lists privately stored model files and inspection
+metadata, with downloads disabled; dataset preparation remains offline. See [pairing service](server/README.md).
