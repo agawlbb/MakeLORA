@@ -57,7 +57,7 @@ session expiry. The frontend accepts it once through a password field and then
 shows only the remove control. Save/remove require a session CSRF token. Paired
 device provider operations must read the credential server-side after verifying
 an active device credential; never send the provider token to a device. No
-provider jobs or downloads are currently implemented.
+provider jobs are started without an authenticated generation request.
 
 The production backup policy captures the dedicated database and grants, private
 configuration, model files and persistent token. Transient `sess_*` files are
@@ -94,8 +94,8 @@ All API responses are JSON with no-store caching:
 
 The page lists one collapsed row per safetensors file: display name, upload time
 and target model. Expanding shows the original filename, hash and inspection
-metadata. There is no upload/download HTTP endpoint and device tokens cannot
-read files. Model binaries are never committed to Git.
+metadata. Device generation uses scoped, signed provider downloads; model binaries are
+never committed to Git.
 
 The CLI importer supports `file_storage_directory` from private settings and
 requires Python 3 plus PHP CLI. It snapshots source bytes, validates bounded
