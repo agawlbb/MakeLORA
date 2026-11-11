@@ -40,3 +40,11 @@ The Xcode project is generated from `project.yml`. The app has no third-party ru
 GitHub Actions validates the Swift package and runs application tests on an iPad simulator. Signing and TestFlight use a separate manual workflow. See [release setup](RELEASE.md).
 
 Licensed under the repository's GPL license. Release scripts and workflow structure are adapted from the same owner's GPL-licensed FanControlWatch project.
+
+## Optional server pairing
+
+Projects → **Server** can scan or paste a pairing invitation from a configured
+HTTPS pairing service. Confirm the matching code on its management page, then
+check status in the app. Connections are saved in device-only Keychain storage.
+Pairing is currently a prototype and grants no tensor storage or model-run
+access; dataset preparation remains offline. See [pairing service](server/README.md).

@@ -1,0 +1,78 @@
+# Pairing prototype
+
+PHP 8.2+ and MariaDB. The management page is intentionally open on the VM. Device
+credentials grant only status/disconnect access; there are no file/provider APIs.
+Do not enable this open management mode for a service with real privileges.
+
+Install dependencies inside development:
+
+```sh
+dev bash -lc 'cd /home/dev/projects/MakeLORA/server && composer install --no-dev --prefer-dist'
+```
+
+Set the web document root/alias to **server/public only**, import `schema.sql`, and
+set `MAKELORA_CONFIG` to an absolute private PHP settings file based on
+`settings.example.php`. Configure a fixed HTTPS `base_url`; request Host headers
+are never used to generate invitations. Settings and database credentials stay
+outside Git. The runtime deliberately refuses non-prototype configurations until
+shared authentication is integrated.
+
+The VM route is `/makelora/`. Its private configuration uses the existing
+VM-only LensSwap test database credential, with isolated `makelora_` table names;
+no LensSwap tables are accessed. A dedicated MakeLORA database/user can replace
+this configuration later. Schema creation is explicit and idempotent, not run by
+web requests. The VM Apache mount/alias is tracked separately in vm-laptop.
+
+Invitations contain version 1, the server base URL, and a 256-bit random secret.
+They expire after five minutes and are redeemed once under a row lock. Secrets
+are stored hashed. The website shows a pending device's six-digit confirmation
+code. Approve only after matching it on the iPad. Pending requests expire after
+five minutes. Device credentials are random 256-bit bearer tokens, stored hashed
+server-side and in device-only, when-unlocked Keychain storage on the iPad after
+approval. Prototype credentials last until revocation; future privileged access
+requires a review of expiry/rotation and authorization. Revocation takes effect
+on the next request. Revoked devices remain visible for management history.
+
+The app supports one server connection. Return to Projects → Server to pair,
+check status, or disconnect. Camera-unavailable devices can paste the displayed
+invitation. Pending credentials remain in memory, so closing the app during
+pairing requires a new invitation. The website and app use manual refresh/check
+buttons. Disconnect removes local credentials even if offline; if the server
+cannot be reached, revoke the device on the website. No credentials follow HTTP
+redirects. No server address or credential is embedded in the app.
+
+## API
+
+All responses are JSON with no-store caching. Errors contain `error`.
+
+- `POST api.php?action=redeem`: JSON `invitation`, `name` (1–100 characters).
+  Returns 201 with `deviceID`, `token`, `confirmation`, `status: pending`.
+- `GET api.php?action=status`: Bearer token; returns `deviceID`, `name`,
+  `confirmation`, `status` (`pending` or `active`). Updates last contact.
+- `POST api.php?action=disconnect`: Bearer token; revokes that device.
+- Invalid/unknown/revoked credentials return 401, expired invitations/pending
+  requests 410, invalid input 400, unsupported operations 405, failures 503.
+
+No API can list/manage other devices or create invitations. Website mutations
+require a session CSRF token and secure same-site cookies. Tokens must not be
+logged. Keep HTTPS and default logs without request bodies/authorization headers.
+
+## Verification and deployment
+
+Run the following only against the VM prototype:
+
+```sh
+dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 server/tests/integration.py https://vm.coffeybean.com/makelora'
+```
+
+The test It creates temporary devices, removes those device rows, and leaves
+short-lived invitation rows. Swift invitation tests run with the existing package
+CI. QR camera/Keychain checks need a physical iPad and a separately requested iOS
+build; no build or release is part of this change.
+
+VPS deployment is deferred. Integrate management requests with the existing
+shared sign-in and `vps_access` claim, keeping device endpoints outside browser
+redirect authentication. Add a directory link, configure the production database,
+and enforce authentication before enabling production mode. Do not copy VM
+credentials or paired-device records to production. No Firebase setup is needed
+for this VM prototype.

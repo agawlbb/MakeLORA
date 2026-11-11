@@ -16,3 +16,5 @@ credentials/
 secrets/
 *.ipa
 *.xcarchive/
+/server/vendor/
+/server/settings.php

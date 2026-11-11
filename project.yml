@@ -29,6 +29,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
+        NSCameraUsageDescription: Scan a QR invitation to pair with your server.
         CFBundleDisplayName: MakeLORA
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

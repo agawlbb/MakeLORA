@@ -8,6 +8,7 @@ private let accent = Color(red: 0.70, green: 0.91, blue: 0.43)
 struct RootView: View {
     @EnvironmentObject private var store: ProjectStore
     @Environment(\.scenePhase) private var phase
+    @State private var serverSettings = false
     @State private var newProject = false
     @State private var projectName = ""
     var body: some View {
@@ -39,11 +40,12 @@ struct RootView: View {
                         }.padding(32)
                     }
                     .navigationTitle("MakeLORA")
-                    .toolbar { Button("New project", systemImage: "plus") { projectName = ""; newProject = true }.buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black) }
+                    .toolbar { Button("Server", systemImage: "server.rack") { serverSettings = true }; Button("New project", systemImage: "plus") { projectName = ""; newProject = true }.buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black) }
                 }
             }
         }
         .tint(accent)
+        .sheet(isPresented: $serverSettings) { ServerView() }
         .disabled(store.busy)
         .overlay { if store.busy { ProgressView(store.status).padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) } }
         .alert("New project", isPresented: $newProject) {

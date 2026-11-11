@@ -1,0 +1,44 @@
+<?php
+declare(strict_types=1);
+require dirname(__DIR__).'/src/bootstrap.php';
+ini_set('session.use_strict_mode','1');
+session_name('makelora_management');
+session_set_cookie_params(['secure'=>true,'httponly'=>true,'samesite'=>'Strict','path'=>parse_url($config['base_url'],PHP_URL_PATH) ?: '/']);
+session_start();
+$_SESSION['csrf'] ??= bin2hex(random_bytes(32));
+if ($_SERVER['REQUEST_METHOD']==='POST') {
+    if (!hash_equals($_SESSION['csrf'],(string)($_POST['csrf'] ?? ''))) { http_response_code(403); exit('Reload the page and try again.'); }
+    $action=$_POST['action'] ?? '';
+    if ($action==='invite') {
+        $secret=bin2hex(random_bytes(32));
+        query('INSERT INTO makelora_invites (id,expires_at) VALUES (?,DATE_ADD(UTC_TIMESTAMP(), INTERVAL 5 MINUTE))',[hash('sha256',$secret)]);
+        $_SESSION['invite']=['secret'=>$secret,'expires'=>time()+300];
+    } elseif ($action==='approve') {
+        query("UPDATE makelora_devices SET status='active' WHERE id=? AND status='pending' AND expires_at>UTC_TIMESTAMP()",[(string)($_POST['id'] ?? '')]);
+    } elseif ($action==='revoke') {
+        query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[(string)($_POST['id'] ?? '')]);
+    }
+    header('Location: ./',true,303); exit;
+}
+$invite=$_SESSION['invite'] ?? null;
+$payload=null; $svg=null;
+if ($invite && $invite['expires']>time()) {
+    $used=query('SELECT used_at FROM makelora_invites WHERE id=?',[hash('sha256',$invite['secret'])])->fetch();
+    if ($used && !$used['used_at']) {
+        $payload=json_encode(['version'=>1,'server'=>rtrim($config['base_url'],'/'),'invitation'=>$invite['secret']],JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
+        $writer=new BaconQrCode\Writer(new BaconQrCode\Renderer\ImageRenderer(new BaconQrCode\Renderer\RendererStyle\RendererStyle(320),new BaconQrCode\Renderer\Image\SvgImageBackEnd()));
+        $svg=$writer->writeString($payload);
+    }
+}
+$devices=query('SELECT * FROM makelora_devices ORDER BY created_at DESC')->fetchAll();
+?><!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MakeLORA devices</title><link rel="stylesheet" href="style.css"><main>
+<h1>MakeLORA devices</h1><p>VM prototype · Management is open. Pairing grants no file or model-run access.</p>
+<form method="post"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>"><button name="action" value="invite">Generate pairing QR</button></form>
+<?php if ($payload): ?><section><h2>Pair your iPad</h2><p>In MakeLORA, open Server → Scan QR. This invitation expires in five minutes and works once.</p><img width="320" height="320" alt="Pairing invitation" src="data:image/svg+xml;base64,<?=base64_encode($svg)?>"><p>Alternatively, copy this invitation into the app:</p><textarea readonly aria-label="Pairing invitation"><?=escape($payload)?></textarea></section><?php endif ?>
+<p><a href="./">Refresh device status</a></p>
+<?php foreach ($devices as $device): $expired=$device['status']==='pending' && strtotime($device['expires_at'].' UTC')<=time(); ?>
+<section><h2><?=escape($device['name'])?></h2><p><?=escape($expired?'expired':$device['status'])?> · Paired/requested <?=escape($device['created_at'])?> UTC<br>Last contact: <?=escape($device['last_seen_at'] ?? 'Never')?> UTC</p>
+<form method="post"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>"><input type="hidden" name="id" value="<?=escape($device['id'])?>">
+<?php if ($device['status']==='pending' && !$expired): ?><p>Confirm that the iPad shows <strong><?=escape($device['confirmation'])?></strong> before approving.</p><button name="action" value="approve">Approve matching device</button><?php endif ?>
+<?php if ($device['status']!=='revoked'): ?><button name="action" value="revoke"><?=$device['status']==='pending'?'Cancel pairing':'Revoke device'?></button><?php endif ?></form></section><?php endforeach ?>
+</main></html>
