@@ -123,3 +123,8 @@ dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 server/tests/catalog_int
 
 This remains a VM prototype. Production hosting and authenticated file serving
 require separate work and authorization.
+
+User-specified target models are stored in `makelora_files.target_model`,
+shown separately from embedded metadata, and preserved on reimport. Existing
+catalog databases must apply `migrations/002_file_target_model.sql` before
+updating the page; new databases include the column in `schema.sql`.

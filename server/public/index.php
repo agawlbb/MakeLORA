@@ -31,13 +31,14 @@ if ($invite && $invite['expires']>time()) {
     }
 }
 $devices=query('SELECT * FROM makelora_devices ORDER BY created_at DESC')->fetchAll();
-$files=query('SELECT sha256, original_name, size_bytes, inspection_json, imported_at FROM makelora_files ORDER BY imported_at DESC, sha256')->fetchAll();
+$files=query('SELECT sha256, original_name, size_bytes, target_model, inspection_json, imported_at FROM makelora_files ORDER BY imported_at DESC, sha256')->fetchAll();
 ?><!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MakeLORA server</title><link rel="stylesheet" href="style.css"><main>
 <h1>MakeLORA server</h1><p>VM prototype · Management is open. Pairing grants no file or model-run access.</p>
-<h2>File catalog</h2><p>Files are stored privately on this VM. Downloads are not enabled. Model declarations come from file metadata and are not verified provenance.</p>
+<h2>File catalog</h2><p>Files are stored privately on this VM. Downloads are not enabled. Embedded model declarations and user-specified targets are labeled separately.</p>
 <?php if (!$files): ?><p>No files imported yet.</p><?php endif ?>
 <?php foreach ($files as $file): $scan=json_decode($file['inspection_json'],true,512,JSON_THROW_ON_ERROR); ?>
 <section class="file"><h3><?=escape($file['original_name'])?></h3><dl>
+<?php if ($file['target_model']): ?><dt>Target model (user specified)</dt><dd><?=escape($file['target_model'])?></dd><?php endif ?>
 <dt>Type</dt><dd><?=escape($scan['file_type'])?></dd>
 <dt>Model family (declared)</dt><dd><?=escape($scan['model_family'] ?? 'Unknown')?></dd>
 <dt>Identification</dt><dd><?=escape($scan['identification'])?></dd>

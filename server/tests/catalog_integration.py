@@ -24,6 +24,7 @@ before = rows()
 assert len(before) == 1
 row = before[0]
 assert row['original_name'] == 'addminus.safetensors'
+assert row['target_model'] == 'Qwen/Qwen-Image-Edit-2509'
 assert int(row['size_bytes']) == 590058832
 scan = json.loads(row['inspection_json'])
 assert scan['model_family'] == 'qwen_image'
@@ -40,10 +41,12 @@ after = rows()
 assert len(after) == 1
 assert after[0]['original_name'] == row['original_name']
 assert after[0]['imported_at'] == row['imported_at']
+assert after[0]['target_model'] == row['target_model']
 with urllib.request.urlopen(BASE + '/', timeout=30) as response:
     page = response.read().decode()
     assert 'no-store' in response.headers['Cache-Control'].split(', ')
 for expected in ['addminus.safetensors', DIGEST, 'qwen_image', 'BF16',
+                 'Qwen/Qwen-Image-Edit-2509', 'Target model (user specified)',
                  '1,680', '294,912,000', 'Downloads are not enabled',
                  'Unknown — not recorded in the file']:
     assert expected in page, expected
