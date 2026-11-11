@@ -5,6 +5,7 @@ require dirname(__DIR__).'/src/bootstrap.php';
 try {
     $action = $_GET['action'] ?? '';
     require_once dirname(__DIR__).'/src/generation.php';
+    if ($action==='generation_webhook' && $_SERVER['REQUEST_METHOD']==='POST') generationWebhook();
     if ($action==='weights' && $_SERVER['REQUEST_METHOD']==='GET') serveWeights();
     if ($action === 'redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 4096) fail('Request too large.',413);
@@ -25,10 +26,8 @@ try {
     if ($auth === '') {
         foreach (getallheaders() as $key=>$value) { if (strcasecmp($key,'Authorization')===0) $auth=$value; }
     }
-    if (!preg_match('/^Bearer ([a-f0-9]{64})$/D',$auth,$m)) fail('Device credential required.',401);
-    $row=query('SELECT * FROM makelora_devices WHERE token_hash=?',[hash('sha256',$m[1])])->fetch();
-    if (!$row || $row['status']==='revoked') fail('Device access revoked or unknown.',401);
-    if ($row['status']==='pending' && strtotime($row['expires_at'].' UTC')<=time()) fail('Pairing approval expired.',410);
+    require_once dirname(__DIR__).'/src/device-auth.php';
+    $row=authenticatedDevice($auth);
     if ($action==='status' && $_SERVER['REQUEST_METHOD']==='GET') {
         query('UPDATE makelora_devices SET last_seen_at=UTC_TIMESTAMP() WHERE id=?',[$row['id']]);
         jsonResponse(['deviceID'=>$row['id'],'name'=>$row['name'],'status'=>$row['status'],'confirmation'=>$row['confirmation']]);
@@ -36,7 +35,7 @@ try {
     if ($action==='disconnect' && $_SERVER['REQUEST_METHOD']==='POST') {
         query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[$row['id']]); jsonResponse(['status'=>'revoked']);
     }
-    if (in_array($action,['models','generate','prediction'],true)) generationAPI($action,$row);
+    if (in_array($action,['models','generate','prediction','gallery','output','remove_output'],true)) generationAPI($action,$row);
     fail('Unknown operation or method.',405);
 } catch (JsonException|TypeError $e) { fail('Invalid request.'); }
 catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); error_log('MakeLORA pairing failure: '.get_class($e)); fail('Pairing service unavailable.',503); }

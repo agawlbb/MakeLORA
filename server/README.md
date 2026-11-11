@@ -130,38 +130,84 @@ through both the current and compatibility API URLs. Remove temporary test rows
 and credentials afterwards. No iOS build/release is part of a server deployment.
 
 
-## Mobile generation
+## Mobile generation and shared output gallery
 
-Apply `migrations/004_generations.sql` to the server database before deploying
-this version (new installations include it in `schema.sql`). PHP requires cURL
-and outbound HTTPS access to `api.replicate.com`. The saved server-side Replicate
-token is reused; no provider credential is returned to a device.
+For an existing installation, apply `migrations/004_generations.sql` if generation
+has never been installed, then `migrations/005_server_gallery.sql` before deploying.
+New installations use the updated `schema.sql` instead of replaying migrations.
+Migration 005 preserves older prediction IDs. PHP requires cURL and outbound
+HTTPS access to `api.replicate.com` and `*.replicate.delivery`. The existing saved
+Replicate token is reused; no provider credential is returned to a device.
 
-Active devices can GET `api.php?action=models`, POST `action=generate` with
-`model` (catalog SHA-256), `image` (JPEG data URI), `prompt`, `aspect_ratio`,
-`lora_scale` and optional integer `seed`, then GET `action=prediction&id=...`.
-Only the device that submitted a prediction can poll it. Current supported base
-models are `Qwen/Qwen-Image-Edit-2509` and `Qwen-Image-Edit-2509`; other catalog
-entries remain visible with generation disabled. JPG output and disabled safety
-checking are supplied server-side. Provider requests use the fixed
-`qwen/qwen-image-edit-plus-lora` endpoint. Status and logs are passed to the app;
-outputs are downloaded and retained locally by the app, not archived by PHP.
+Active paired devices can:
+- GET `api.php?action=models` for the weight catalog.
+- POST `action=generate` with `model` (catalog SHA-256), `image` (JPEG data URI),
+  `prompt`, `aspect_ratio`, `lora_scale` and optional integer `seed`.
+- GET `action=prediction&id=...` to poll a server job, including a job started by
+  another approved device.
+- GET `action=gallery` to list the shared server gallery. Pages contain up to 100
+  metadata entries and a `next` cursor; pass it as `before` for the next page.
+- GET `action=output&id=...` to view a private archived JPG.
+- POST `action=remove_output&id=...` to remove an image for every device.
 
-The provider receives a one-hour signed URL to download the selected private
-weight via `action=weights`. This scoped URL authorizes only that file, reveals
-no device/provider token, and becomes invalid if the provider token changes.
-Keep `base_url` publicly reachable over HTTPS, allow large responses and image
-requests up to 16 MB through the frontend, and keep private weight storage
-outside the document root. Revoking a device stops further API requests; an
-already-issued signed weight URL remains valid until expiry. Provider retention
-limits still apply if the app cannot retrieve outputs promptly. If submission
-loses its response before a job ID reaches the device, check Replicate before
-retrying to avoid starting a duplicate paid prediction.
+Every operation above requires `Authorization: Bearer <active device token>`.
+Missing, malformed, unknown and revoked tokens fail authentication; pending
+devices cannot access these operations. There are no public output URLs. Images
+are served with `Cache-Control: no-store`. The mobile gallery keeps display data
+in memory; only an explicit Share request writes a temporary original for the
+iOS share sheet, cleaned up on dismissal or the next launch after termination.
 
-Run offline generation API checks inside development:
+Current supported bases are `Qwen/Qwen-Image-Edit-2509` and
+`Qwen-Image-Edit-2509`. Other weights remain visible with generation disabled.
+The fixed provider endpoint is `qwen/qwen-image-edit-plus-lora`, with JPG output
+and safety checking disabled.
+
+The server supplies a one-hour signed `action=weights` URL to Replicate for the
+selected private weight. This authorizes only that file and exposes no
+device/provider token. It expires independently of device revocation and becomes
+invalid if the provider token changes.
+
+### Server archival
+
+Generated originals are stored under `private_session_directory/outputs`,
+outside the public document root (directory mode 0700, file mode 0600).
+The PHP user needs write access and sufficient storage. Include this directory
+and the database in the existing server backup process; no new backup jobs are
+installed by this change.
+
+Each new prediction registers an HTTPS completion callback at
+`api.php?action=generation_webhook&id=...&secret=...`. The callback's random
+secret is scoped to that job and stored only as a hash; it grants no gallery,
+weight catalog or device access. Keep callback query strings out of access logs.
+The server re-fetches the provider prediction before trusting its result.
+Downloads accept only HTTPS Replicate delivery hosts, reject redirects, cap
+each original at 50 MB and validate JPG content. Originals are committed with
+gallery metadata before success is reported. Duplicate callbacks and concurrent
+polling serialize on the job row; deletion tombstones prevent image resurrection.
+
+Completion callbacks archive outputs while the app is closed; polling also
+retries archival if a callback fails. A callback can recover a provider ID when
+the create response was lost or has not yet been recorded, after verifying that
+the provider prediction contains the matching callback. No new scheduled jobs
+are installed. Keep `base_url` publicly reachable over HTTPS without redirects,
+allow the callback through the frontend, and permit image submissions up to
+16 MB. Provider output retention and callback retry windows still limit recovery
+during an extended server outage. If submission loses its response before a job
+ID reaches the device, inspect the shared gallery and Replicate before retrying
+to avoid a duplicate paid prediction.
+
+### Tests
+
+Inside development, run:
 
 ```sh
 php -n server/tests/generation.php
+php server/tests/gallery_schema.php
 ```
 
-No migration, deployment or paid prediction is started by these tests.
+The first uses a fake provider/database to test pairing-token rejection, shared
+access from two devices, callback archival without a client, invalid output
+rollback, missing-create-response recovery, pagination, deletion and retry
+idempotency. It starts no paid jobs. The SQL check requires the VM's existing
+`/home/dev/projects/.test-config/makelora.php` credentials and uses temporary
+tables only; it never applies production migrations.

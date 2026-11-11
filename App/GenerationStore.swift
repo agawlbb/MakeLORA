@@ -9,19 +9,16 @@ struct GenerationModel: Decodable, Identifiable {
     let details: String
     let supported: Bool
 }
-struct GenerationOutput: Codable, Identifiable {
-    var id = UUID()
-    let filename: String
+struct GenerationOutput: Decodable, Identifiable {
+    let id: String
     let model: String
     let prompt: String
     let date: Date
-    var sourceKey: String? = nil
 }
 private struct Prediction: Decodable {
     let id: String
     let status: String
     let logs: String?
-    let output: [URL]?
     let error: String?
 }
 private struct PendingGeneration: Codable {
@@ -38,41 +35,82 @@ private struct PendingGeneration: Codable {
     @Published var status = ""
     @Published var logs = ""
     @Published var error: String?
-    private let session = URLSession(configuration: .ephemeral, delegate: NoPairingRedirects(), delegateQueue: nil)
+    private let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration, delegate: NoPairingRedirects(), delegateQueue: nil)
+    }()
     private let directory: URL
+    private let shareDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("MakeLORAGenerationShares", isDirectory: true)
     private var pending: PendingGeneration?
     private var activeCredential: DeviceCredential?
     init() {
         directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Generation", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let index = directory.appendingPathComponent("gallery.json")
-            if FileManager.default.fileExists(atPath: index.path) { outputs = try JSONDecoder().decode([GenerationOutput].self, from: Data(contentsOf: index)) }
+            try FileManager.default.createDirectory(at: shareDirectory, withIntermediateDirectories: true)
+            // Remove only temporary share files left by a previous terminated session.
+            for file in try FileManager.default.contentsOfDirectory(at: shareDirectory, includingPropertiesForKeys: nil) {
+                try FileManager.default.removeItem(at: file)
+            }
             let job = directory.appendingPathComponent("pending.json")
             if FileManager.default.fileExists(atPath: job.path) { pending = try JSONDecoder().decode(PendingGeneration.self, from: Data(contentsOf: job)) }
-        } catch { self.error = "Could not restore generation gallery: \(error.localizedDescription)" }
+        } catch { self.error = "Could not restore generation session: \(error.localizedDescription)" }
     }
-    func url(_ output: GenerationOutput) -> URL { directory.appendingPathComponent(output.filename) }
-    private func persist() throws { try JSONEncoder().encode(outputs).write(to: directory.appendingPathComponent("gallery.json"), options: .atomic) }
     private func savePending() throws {
         // Device credentials stay in Keychain; persist only job metadata.
         guard let pending else { return }
         let data = try JSONEncoder().encode(pending)
         try data.write(to: directory.appendingPathComponent("pending.json"), options: [.atomic, .completeFileProtection])
     }
-    func remove(_ output: GenerationOutput) {
+    func remove(_ output: GenerationOutput) async -> Bool {
+        guard let credential = activeCredential else { return false }
         do {
-            let previous = outputs
+            _ = try await request("remove_output", credential: credential, body: [:], id: output.id)
             outputs.removeAll { $0.id == output.id }
-            do { try persist() } catch { outputs = previous; throw error }
-            try FileManager.default.removeItem(at: url(output))
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
-    private func request(_ action: String, credential: DeviceCredential, body: [String: Any]? = nil, id: String? = nil) async throws -> Data {
+    func imageData(_ output: GenerationOutput) async throws -> Data {
+        guard let credential = activeCredential else { throw URLError(.userAuthenticationRequired) }
+        let data = try await request("output", credential: credential, id: output.id)
+        guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { throw URLError(.cancelled) }
+        return data
+    }
+    func prepareShare(_ output: GenerationOutput) async throws -> URL {
+        // A temporary original exists only during the user-requested share sheet.
+        let data = try await imageData(output)
+        try Task.checkCancellation()
+        let url = shareDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        return url
+    }
+    func refreshGallery() async {
+        guard let credential = activeCredential else { outputs = []; return }
+        do {
+            struct Gallery: Decodable { let outputs: [GenerationOutput]; let next: String? }
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            var collected: [GenerationOutput] = []
+            var before: String?
+            repeat {
+                let data = try await request("gallery", credential: credential, before: before)
+                let page = try decoder.decode(Gallery.self, from: data)
+                collected.append(contentsOf: page.outputs); before = page.next
+            } while before != nil
+            guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return }
+            outputs = collected
+        } catch {
+            outputs = [] // Never leave a gallery visible after failed access verification.
+            self.error = error.localizedDescription
+        }
+    }
+    private func request(_ action: String, credential: DeviceCredential, body: [String: Any]? = nil, id: String? = nil, before: String? = nil) async throws -> Data {
         var parts = URLComponents(url: credential.server.appendingPathComponent("api.php"), resolvingAgainstBaseURL: false)!
         parts.queryItems = [URLQueryItem(name: "action", value: action)]
         if let id { parts.queryItems?.append(URLQueryItem(name: "id", value: id)) }
-        var request = URLRequest(url: parts.url!); request.timeoutInterval = 90
+        if let before { parts.queryItems?.append(URLQueryItem(name: "before", value: before)) }
+        var request = URLRequest(url: parts.url!, cachePolicy: .reloadIgnoringLocalCacheData); request.timeoutInterval = 90
         request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -87,11 +125,14 @@ private struct PendingGeneration: Codable {
     }
     func load(_ credential: DeviceCredential?) async {
         activeCredential = credential
-        models = []
+        models = []; outputs = []
         guard let credential else { return }
         do {
             struct Catalog: Decodable { let models: [GenerationModel] }
-            models = try JSONDecoder().decode(Catalog.self, from: await request("models", credential: credential)).models
+            let catalog = try JSONDecoder().decode(Catalog.self, from: await request("models", credential: credential))
+            guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return }
+            models = catalog.models
+            await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
     func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String) async {
@@ -124,24 +165,17 @@ private struct PendingGeneration: Codable {
             let reply = try JSONDecoder().decode(Prediction.self, from: await request("prediction", credential: credential, id: job.id))
             status = reply.status.capitalized; logs = reply.logs ?? ""
             if reply.status == "succeeded" {
-                for (index, remote) in (reply.output ?? []).enumerated() {
-                    let sourceKey = job.id + ":" + String(index)
-                    if outputs.contains(where: { $0.sourceKey == sourceKey }) { continue }
-                    guard remote.scheme == "https" else { throw URLError(.badURL) }
-                    let (data, response) = try await session.data(from: remote)
-                    guard (response as? HTTPURLResponse)?.statusCode == 200, let image = UIImage(data: data), let jpg = image.jpegData(compressionQuality: 0.95) else { throw URLError(.cannotDecodeContentData) }
-                    let output = GenerationOutput(filename: UUID().uuidString + ".jpg", model: job.model, prompt: job.prompt, date: Date(), sourceKey: sourceKey)
-                    try jpg.write(to: url(output), options: .atomic)
-                    outputs.insert(output, at: 0)
-                    do { try persist() } catch { outputs.removeAll { $0.id == output.id }; throw error }
-                }
-                try finish(); status = "Saved to gallery"; return
+                try finish(); status = "Saved to server gallery"
+                await refreshGallery()
+                return
             }
             if ["failed", "canceled"].contains(reply.status) { try finish(); error = reply.error ?? "Generation \(reply.status)."; return }
             try await Task.sleep(for: .seconds(2))
         }
     }
     private func finish() throws {
-        try FileManager.default.removeItem(at: directory.appendingPathComponent("pending.json")); pending = nil
+        let file = directory.appendingPathComponent("pending.json")
+        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        pending = nil
     }
 }

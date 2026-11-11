@@ -33,16 +33,16 @@ struct GenerationView: View {
                     Section("Generation status") {
                         if store.busy { ProgressView(store.status) } else { Text(store.status) }
                         if !store.logs.isEmpty { Text(store.logs).font(.caption.monospaced()).textSelection(.enabled) }
-                        if store.hasPending && !store.busy { Button("Resume updates and save outputs") { Task { await store.resume() } } }
+                        if store.hasPending && !store.busy { Button("Resume generation updates") { Task { await store.resume() } } }
                     }
                 }
                 Section("Output gallery · \(store.outputs.count)") {
-                    if store.outputs.isEmpty { Text("Your generated images will be saved here on this device.").foregroundStyle(.secondary) }
+                    if store.outputs.isEmpty { Text("Images are stored on your server and shared with all paired devices.").foregroundStyle(.secondary) }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 12) {
                         ForEach(store.outputs) { output in
                             Button { selectedOutput = output } label: {
                                 VStack(alignment: .leading) {
-                                    LocalGenerationImage(url: store.url(output)).frame(height: 150).clipped()
+                                    ServerGenerationImage(output: output).frame(height: 150).clipped()
                                     Text(output.model).font(.caption).lineLimit(1)
                                 }
                             }.buttonStyle(.plain).accessibilityLabel("View generated image, \(output.model)")
@@ -59,21 +59,54 @@ struct GenerationView: View {
             Task { await store.resume() }
         }
         .onChange(of: phase) { _, value in
-            if value == .active { Task { await store.resume() } }
+            if value == .active {
+                Task { await store.load(pairing.credential); await store.resume() }
+            }
         }
         .sheet(isPresented: $serverSettings) { ServerView() }
         .sheet(item: $selectedModel) { GenerationComposer(model: $0) }
         .sheet(item: $selectedOutput) { GenerationDetail(output: $0) }
+        .onChange(of: pairing.credential?.deviceID) { _, _ in selectedOutput = nil; selectedModel = nil }
         .alert("Generation needs attention", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
     }
 }
-private struct LocalGenerationImage: View {
-    let url: URL
+private struct ServerGenerationImage: View {
+    let output: GenerationOutput
+    var maximum = 512
+    @EnvironmentObject private var store: GenerationStore
+    @EnvironmentObject private var pairing: PairingStore
+    @Environment(\.scenePhase) private var phase
+    @State private var image: UIImage?
+    @State private var failed = false
     var body: some View {
-        if let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFit() }
-        else { Image(systemName: "photo").foregroundStyle(.secondary) }
+        Group {
+            if let image { Image(uiImage: image).resizable().scaledToFit() }
+            else if failed { Label("Image unavailable", systemImage: "photo").foregroundStyle(.secondary) }
+            else { ProgressView() }
+        }
+        .task(id: pairing.credential?.deviceID) { await load() }
+        .onChange(of: phase) { _, value in
+            if value != .active { image = nil }
+            else { Task { await load() } }
+        }
+        .onDisappear { image = nil }
+    }
+    private func load() async {
+        image = nil; failed = false
+        do {
+            let data = try await store.imageData(output)
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maximum
+                  ] as CFDictionary) else { throw URLError(.cannotDecodeContentData) }
+            let decoded = UIImage(cgImage: thumbnail)
+            try Task.checkCancellation()
+            image = decoded
+        } catch { failed = true }
     }
 }
 private struct GenerationComposer: View {
@@ -169,12 +202,16 @@ private struct GenerationDetail: View {
     let output: GenerationOutput
     @EnvironmentObject private var store: GenerationStore
     @Environment(\.dismiss) private var dismiss
-    @State private var share = false
+    @State private var share: ExportItem?
+    @State private var temporaryShare: URL?
+    @State private var sharing = false
+    @State private var shareTask: Task<Void, Never>?
+    @State private var detailError: String?
     @State private var remove = false
     var body: some View {
         NavigationStack {
             ScrollView {
-                LocalGenerationImage(url: store.url(output))
+                ServerGenerationImage(output: output, maximum: 2048)
                 VStack(alignment: .leading, spacing: 12) {
                     Text(output.model).font(.headline)
                     Text(output.prompt).textSelection(.enabled)
@@ -185,14 +222,39 @@ private struct GenerationDetail: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Share", systemImage: "square.and.arrow.up") { share = true }
+                    Button("Share", systemImage: "square.and.arrow.up") {
+                        sharing = true
+                        shareTask = Task {
+                            defer { sharing = false }
+                            do {
+                                let url = try await store.prepareShare(output)
+                                temporaryShare = url; share = ExportItem(url: url)
+                            } catch { detailError = error.localizedDescription }
+                        }
+                    }.disabled(sharing)
                     Button("Remove", systemImage: "trash", role: .destructive) { remove = true }
                 }
             }
         }
-        .sheet(isPresented: $share) { ShareSheet(url: store.url(output)) }
-        .confirmationDialog("Remove this image from the gallery?", isPresented: $remove, titleVisibility: .visible) {
-            Button("Remove image", role: .destructive) { store.remove(output); dismiss() }
+        .sheet(item: $share, onDismiss: cleanupShare) { ShareSheet(url: $0.url) }
+        .onDisappear {
+            if share == nil { shareTask?.cancel(); cleanupShare() }
+        }
+        .alert("Image unavailable", isPresented: Binding(get: { detailError != nil }, set: { if !$0 { detailError = nil } })) {
+            Button("OK") { detailError = nil }
+        } message: { Text(detailError ?? "") }
+        .confirmationDialog("Remove this image from the server gallery for all devices?", isPresented: $remove, titleVisibility: .visible) {
+            Button("Remove image", role: .destructive) {
+                Task {
+                    if await store.remove(output) { dismiss() }
+                    else { detailError = store.error; store.error = nil }
+                }
+            }
         }
     }
+    private func cleanupShare() {
+        if let temporaryShare { try? FileManager.default.removeItem(at: temporaryShare) }
+        temporaryShare = nil
+    }
+
 }

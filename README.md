@@ -61,10 +61,17 @@ Aspect ratio defaults to `match_input_image`, LoRA scale to 1, seed to random
 (blank), output to JPG, and `disable_safety_checker` to true. The server uses its
 saved Replicate token; the app never receives that token.
 
-Status and available provider logs update while generating. Pending job metadata
-is saved on device; reopen Generation or tap Resume after an interrupted update
-to retrieve results while the provider still retains them. All returned images
-are saved in the device’s Application Support gallery. Tap for a larger image,
-the iOS share sheet, or removal. Gallery files are eligible for normal device
-backup; deleting the app removes them. Dataset preparation remains offline. Future server deployments target the VPS unless explicitly requested
+Status and available provider logs update while generating. Completed images are
+archived privately on the server through a completion callback, even if the app
+is closed. All approved paired devices view the same server-wide output gallery.
+A valid active device credential is required to list weights, generate, view
+images, or remove them. Provider output URLs are never handed to the app.
+
+The gallery displays images in memory without saving local image files or using
+a disk URL cache. Tap an image for a larger view or to remove it from the server
+gallery for all devices. **Share** fetches a temporary JPG for the iOS share sheet;
+choose Save to Files, Save Image or another destination to keep your own copy.
+The temporary share file is removed when sharing ends. Pending generation IDs
+are saved locally so status monitoring can resume after interruption; gallery
+images remain on the server. Dataset preparation remains offline. Future server deployments target the VPS unless explicitly requested
 otherwise. See [server operations](server/README.md).
