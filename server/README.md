@@ -147,6 +147,9 @@ Active paired devices can:
   another approved device.
 - GET `action=gallery` to list the shared server gallery. Pages contain up to 100
   metadata entries and a `next` cursor; pass it as `before` for the next page.
+  The first page also includes up to 100 newest unfinished/failed jobs in `jobs`,
+  with a single `latestStatus` message and no log history. Prediction polling
+  updates that message; successful archival replaces the job tile with images.
 - GET `action=output&id=...` to view a private archived JPG.
 - POST `action=remove_output&id=...` to remove an image for every device.
 

@@ -29,16 +29,12 @@ struct GenerationView: View {
                         }
                     }
                 }
-                if !store.status.isEmpty || store.hasPending {
-                    Section("Generation status") {
-                        if store.busy { ProgressView(store.status) } else { Text(store.status) }
-                        if !store.logs.isEmpty { Text(store.logs).font(.caption.monospaced()).textSelection(.enabled) }
-                        if store.hasPending && !store.busy { Button("Resume generation updates") { Task { await store.resume() } } }
-                    }
-                }
-                Section("Output gallery · \(store.outputs.count)") {
-                    if store.outputs.isEmpty { Text("Images are stored on your server and shared with all paired devices.").foregroundStyle(.secondary) }
+                Section("Output gallery · \(store.outputs.count + store.galleryJobs.count)") {
+                    if store.outputs.isEmpty && store.galleryJobs.isEmpty { Text("Images are stored on your server and shared with all paired devices.").foregroundStyle(.secondary) }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 12) {
+                        ForEach(store.galleryJobs) { job in
+                            GenerationProgressTile(job: job)
+                        }
                         ForEach(store.outputs) { output in
                             Button { selectedOutput = output } label: {
                                 VStack(alignment: .leading) {
@@ -54,14 +50,11 @@ struct GenerationView: View {
             .toolbar { Button("Server", systemImage: "server.rack") { serverSettings = true } }
             .refreshable { await store.load(pairing.credential) }
         }
-        .task(id: pairing.credential?.deviceID) {
+        .task(id: "\(pairing.credential?.deviceID ?? "")-\(phase)") {
+            guard phase == .active else { return }
             await store.load(pairing.credential)
             Task { await store.resume() }
-        }
-        .onChange(of: phase) { _, value in
-            if value == .active {
-                Task { await store.load(pairing.credential); await store.resume() }
-            }
+            await store.watchGallery()
         }
         .sheet(isPresented: $serverSettings) { ServerView() }
         .sheet(item: $selectedModel) { GenerationComposer(model: $0) }
@@ -70,6 +63,27 @@ struct GenerationView: View {
         .alert("Generation needs attention", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
         } message: { Text(store.error ?? "") }
+    }
+}
+private struct GenerationProgressTile: View {
+    let job: GenerationJob
+    @EnvironmentObject private var store: GenerationStore
+    var body: some View {
+        VStack(alignment: .leading) {
+            VStack(spacing: 12) {
+                if job.isProcessing { ProgressView().controlSize(.large) }
+                else { Image(systemName: job.status == "paused" ? "pause.circle" : "exclamationmark.circle").font(.largeTitle).foregroundStyle(.secondary) }
+                Text(job.latestStatus).font(.caption).multilineTextAlignment(.center).lineLimit(3)
+                if job.status == "paused" && store.hasPending {
+                    Button("Resume") { Task { await store.resume() } }.font(.caption)
+                }
+            }
+            .frame(maxWidth: .infinity).frame(height: 150)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+            Text(job.model).font(.caption).lineLimit(1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Upcoming image, \(job.latestStatus)")
     }
 }
 private struct ServerGenerationImage: View {

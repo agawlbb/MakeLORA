@@ -68,8 +68,18 @@ function downloadOutput(string $url, string $path): void {
     $info=@getimagesize($path);
     if (!$info || ($info['mime'] ?? '')!=='image/jpeg') throw new RuntimeException('Invalid output image.');
 }
+function latestGenerationStatus(array $job): string {
+    $status=$job['status'];
+    if (!in_array($status,['starting','processing'],true)) return ucfirst($status);
+    $lines=preg_split('/[\r\n]+/',preg_replace('/\x1b\[[0-9;]*[a-zA-Z]/','',$job['logs'] ?? ''));
+    foreach (array_reverse($lines) as $line) {
+        $line=trim($line);
+        if ($line!=='' && preg_match('/^.{1,240}/us',$line,$match)) return $match[0];
+    }
+    return $status==='starting' ? 'Starting…' : 'Processing…';
+}
 function storedPrediction(array $job): array {
-    return ['id'=>$job['id'],'status'=>$job['status'],'logs'=>$job['logs'] ?? '',
+    return ['id'=>$job['id'],'status'=>$job['status'],'logs'=>$job['logs'] ?? '', 'latestStatus'=>latestGenerationStatus($job),
         'error'=>in_array($job['status'],['failed','canceled'],true) ? 'Generation '.$job['status'].'.' : null];
 }
 function syncGeneration(array $job): array {
@@ -102,7 +112,7 @@ function syncGeneration(array $job): array {
             }
         }
         $job['status']=$prediction['status'];
-        $job['logs']=substr($prediction['logs'] ?? '',0,20000);
+        $job['logs']=substr($prediction['logs'] ?? '',-20000);
         query('UPDATE makelora_generations SET status=?,logs=? WHERE id=?',[$job['status'],$job['logs'],$job['id']]);
         $db->commit();
         return storedPrediction($job);
@@ -156,14 +166,22 @@ function startGeneration(array $input, array $device): array {
         'input'=>$args,'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$id,'secret'=>$callback]),
         'webhook_events_filter'=>['completed']]);
     query('UPDATE makelora_generations SET provider_id=? WHERE id=?',[$prediction['id'],$id]);
-    return ['id'=>$id,'status'=>$prediction['status'],'logs'=>'','error'=>null];
+    return ['id'=>$id,'status'=>$prediction['status'],'logs'=>'','latestStatus'=>latestGenerationStatus(['status'=>$prediction['status'],'logs'=>'']),'error'=>null];
 }
 function galleryPage(string $before=''): array {
     if ($before!=='' && !preg_match('/^[a-f0-9]{64}$/D',$before)) fail('Invalid gallery cursor.');
     $rows=query("SELECT o.id,g.model_name AS model,COALESCE(g.prompt,'') AS prompt,DATE_FORMAT(o.created_at,'%Y-%m-%dT%H:%i:%sZ') AS date FROM makelora_outputs o JOIN makelora_generations g ON g.id=o.generation_id WHERE o.deleted_at IS NULL AND o.id<? ORDER BY o.id DESC LIMIT 101",[$before==='' ? str_repeat('f',64) : $before])->fetchAll();
     $more=count($rows)>100;
     $rows=array_slice($rows,0,100);
-    return ['outputs'=>$rows,'next'=>$more ? $rows[count($rows)-1]['id'] : null];
+    $jobs=[];
+    if ($before==='') {
+        $jobs=query("SELECT id,model_name AS model,COALESCE(prompt,'') AS prompt,status,logs FROM makelora_generations WHERE provider_id IS NOT NULL AND status<>'succeeded' ORDER BY created_at DESC,id DESC LIMIT 100")->fetchAll();
+        foreach ($jobs as &$job) {
+            $job['latestStatus']=latestGenerationStatus($job);
+            unset($job['logs']);
+        }
+    }
+    return ['outputs'=>$rows,'jobs'=>$jobs,'next'=>$more ? $rows[count($rows)-1]['id'] : null];
 }
 function outputRecord(string $id): array {
     $row=query('SELECT * FROM makelora_outputs WHERE id=? AND deleted_at IS NULL',[$id])->fetch();

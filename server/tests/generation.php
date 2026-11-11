@@ -38,6 +38,11 @@ function query(string $sql,array $params=[]): object {
         $jobs[$params[1]]['provider_id']=$params[0];
     } elseif (str_starts_with($sql,'UPDATE makelora_generations SET status')) {
         $jobs[$params[2]]['status']=$params[0]; $jobs[$params[2]]['logs']=$params[1];
+    } elseif (str_starts_with($sql,'SELECT id,model_name AS model')) {
+        foreach ($jobs as $job) if ($job['provider_id']!==null && $job['status']!=='succeeded') {
+            $rows[]=['id'=>$job['id'],'model'=>$job['model_name'],'prompt'=>$job['prompt'],'status'=>$job['status'],'logs'=>$job['logs']];
+        }
+        $rows=array_slice(array_reverse($rows),0,100);
     } elseif (str_starts_with($sql,'SELECT * FROM makelora_generations')) {
         if (isset($jobs[$params[0]])) $rows=[$jobs[$params[0]]];
     } elseif (str_starts_with($sql,'INSERT INTO makelora_outputs')) {
@@ -77,6 +82,10 @@ function callAPI(string $action,array $device): Reply {
     try { generationAPI($action,$device); } catch (Reply $reply) { return $reply; }
     throw new RuntimeException('Missing response');
 }
+check(latestGenerationStatus(['status'=>'starting','logs'=>''])==='Starting…','Starting fallback');
+check(latestGenerationStatus(['status'=>'processing','logs'=>"Old status\rProgress 50%\n\n"])==='Progress 50%','Only newest nonempty status');
+check(latestGenerationStatus(['status'=>'processing','logs'=>"Old status\n\x1b[32mRendering 75%\x1b[0m"])==='Rendering 75%','Terminal formatting stripped');
+check(latestGenerationStatus(['status'=>'failed','logs'=>'Rendering 75%'])==='Failed','Failure replaces stale progress');
 check(supportedGenerationModel('Qwen/Qwen-Image-Edit-2509'),'Known model');
 check(!supportedGenerationModel('Qwen/Qwen-Image-Edit-2511'),'Incompatible base disabled');
 check(!supportedGenerationModel(null),'Unknown base disabled');
@@ -121,7 +130,14 @@ try {
     check(!str_contains(json_encode($created),'test-token') && !isset($created['output']),'Provider token and URLs not exposed');
     $_GET=['id'=>$id];
     check(callAPI('prediction',$other)->data['status']==='starting','Any approved device can poll');
-    check(callAPI('gallery',$other)->data['outputs']===[],'Empty shared gallery');
+    $upcoming=callAPI('gallery',$other)->data;
+    check($upcoming['outputs']===[] && count($upcoming['jobs'])===1,'Pending tile shared before output exists');
+    check($upcoming['jobs'][0]['id']===$id && $upcoming['jobs'][0]['latestStatus']==='Starting…','Pending tile identity and status');
+    check(!isset($upcoming['jobs'][0]['logs']),'Gallery excludes log history');
+    $prediction=['id'=>'provider-job','status'=>'processing','logs'=>"Loading\nRendering 75%\n",'output'=>null];
+    $reply=callAPI('prediction',$other)->data;
+    check($reply['latestStatus']==='Rendering 75%','Status polling returns only latest display message');
+    check(callAPI('gallery',$other)->data['jobs'][0]['latestStatus']==='Rendering 75%','Shared tile advances to latest status');
     $prediction=['id'=>'provider-job','status'=>'succeeded','logs'=>'Done','output'=>['https://replicate.delivery/result.jpg','https://replicate.delivery/second.jpg']];
     $_GET=['id'=>$id,'secret'=>str_repeat('0',64)];
     try { generationWebhook(); throw new RuntimeException('Invalid callback accepted'); }
@@ -135,7 +151,7 @@ try {
     $badDownloadAt=2;
     try { generationWebhook(['id'=>'provider-job']); throw new RuntimeException('Corrupt image archived'); }
     catch (RuntimeException $error) { check($error->getMessage()==='Invalid output image.','Corrupt output rejected'); }
-    check($images===[] && $jobs[$id]['status']==='starting','Failed archive rolls back database state');
+    check($images===[] && $jobs[$id]['status']==='processing','Failed archive rolls back database state');
     check($jobs[$id]['provider_id']==='provider-job','Callback recovers missing create response');
     check((glob(outputDirectory().'/*') ?: [])===[],'Failed archive removes temporary files');
     $badDownloadAt=0; $downloads=0;
@@ -143,6 +159,7 @@ try {
     check(count($images)===2 && $downloads===2,'All outputs archived without client download');
     $page=callAPI('gallery',$other)->data;
     check(count($page['outputs'])===2 && $page['outputs'][0]['prompt']==='Add glasses','Shared metadata');
+    check($page['jobs']===[],'Completed images replace pending tile');
     foreach ($images as $image) {
         $path=outputDirectory().'/'.$image['storage_key'];
         check(is_file($path) && (fileperms($path)&0777)===0600,'Private server files');

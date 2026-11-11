@@ -21,6 +21,7 @@ function query(string $sql,array $params=[]): PDOStatement {
 function fail(string $message,int $status=400): never { throw new RuntimeException($message); }
 require dirname(__DIR__).'/src/generation.php';
 $page=galleryPage();
+if (count($page['jobs'])!==1 || $page['jobs'][0]['latestStatus']!=='Starting…') throw new RuntimeException('Pending gallery SQL failed.');
 if (count($page['outputs'])!==1 || $page['outputs'][0]['prompt']!=='Prompt') throw new RuntimeException('Gallery SQL failed.');
 if (galleryPage($id)['outputs']!==[]) throw new RuntimeException('Gallery cursor failed.');
 $db->exec("UPDATE makelora_outputs SET deleted_at=UTC_TIMESTAMP()");

@@ -61,7 +61,10 @@ Aspect ratio defaults to `match_input_image`, LoRA scale to 1, seed to random
 (blank), output to JPG, and `disable_safety_checker` to true. The server uses its
 saved Replicate token; the app never receives that token.
 
-Status and available provider logs update while generating. Completed images are
+Each submission immediately adds an upcoming-image tile to the gallery. Its
+spinner animates while processing, and a single status line updates to the latest
+provider message. All paired devices see pending server jobs; completed images
+replace their pending tiles. Failed or canceled tiles stop animating. Completed images are
 archived privately on the server through a completion callback, even if the app
 is closed. All approved paired devices view the same server-wide output gallery.
 A valid active device credential is required to list weights, generate, view

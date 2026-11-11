@@ -15,10 +15,18 @@ struct GenerationOutput: Decodable, Identifiable {
     let prompt: String
     let date: Date
 }
+struct GenerationJob: Decodable, Identifiable {
+    let id: String
+    let model: String
+    let prompt: String
+    var status: String
+    var latestStatus: String
+    var isProcessing: Bool { !["succeeded", "failed", "canceled", "paused"].contains(status) }
+}
 private struct Prediction: Decodable {
     let id: String
     let status: String
-    let logs: String?
+    let latestStatus: String?
     let error: String?
 }
 private struct PendingGeneration: Codable {
@@ -32,8 +40,8 @@ private struct PendingGeneration: Codable {
     @Published var models: [GenerationModel] = []
     @Published var outputs: [GenerationOutput] = []
     @Published var busy = false
-    @Published var status = ""
-    @Published var logs = ""
+    @Published var jobs: [GenerationJob] = []
+    @Published private var localJob: GenerationJob?
     @Published var error: String?
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -57,6 +65,30 @@ private struct PendingGeneration: Codable {
             let job = directory.appendingPathComponent("pending.json")
             if FileManager.default.fileExists(atPath: job.path) { pending = try JSONDecoder().decode(PendingGeneration.self, from: Data(contentsOf: job)) }
         } catch { self.error = "Could not restore generation session: \(error.localizedDescription)" }
+    }
+    var galleryJobs: [GenerationJob] {
+        guard let localJob else { return jobs }
+        return [localJob] + jobs.filter { $0.id != localJob.id }
+    }
+    private func updateLocal(status: String, message: String) {
+        localJob?.status = status
+        localJob?.latestStatus = message
+    }
+    func watchGallery() async {
+        while !Task.isCancelled {
+            if let credential = activeCredential {
+                // Local submissions already have their own status monitor.
+                for job in jobs where job.isProcessing && job.id != pending?.id {
+                    do { _ = try await request("prediction", credential: credential, id: job.id) }
+                    catch {
+                        if Task.isCancelled { return }
+                        // Gallery refresh retains the latest known status; retry next pass.
+                    }
+                }
+            }
+            guard await refreshGallery() else { return }
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+        }
     }
     private func savePending() throws {
         // Device credentials stay in Keychain; persist only job metadata.
@@ -86,23 +118,28 @@ private struct PendingGeneration: Codable {
         try data.write(to: url, options: [.atomic, .completeFileProtection])
         return url
     }
-    func refreshGallery() async {
-        guard let credential = activeCredential else { outputs = []; return }
+    @discardableResult func refreshGallery() async -> Bool {
+        guard let credential = activeCredential else { outputs = []; jobs = []; return false }
         do {
-            struct Gallery: Decodable { let outputs: [GenerationOutput]; let next: String? }
+            struct Gallery: Decodable { let outputs: [GenerationOutput]; let jobs: [GenerationJob]?; let next: String? }
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
             var collected: [GenerationOutput] = []
+            var currentJobs: [GenerationJob] = []
             var before: String?
             repeat {
                 let data = try await request("gallery", credential: credential, before: before)
                 let page = try decoder.decode(Gallery.self, from: data)
+                if before == nil { currentJobs = page.jobs ?? [] }
                 collected.append(contentsOf: page.outputs); before = page.next
             } while before != nil
-            guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return }
-            outputs = collected
+            guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return false }
+            outputs = collected; jobs = currentJobs
+            return true
         } catch {
-            outputs = [] // Never leave a gallery visible after failed access verification.
+            if Task.isCancelled { return false }
+            outputs = []; jobs = [] // Never retain a gallery after failed access verification.
             self.error = error.localizedDescription
+            return false
         }
     }
     private func request(_ action: String, credential: DeviceCredential, body: [String: Any]? = nil, id: String? = nil, before: String? = nil) async throws -> Data {
@@ -124,8 +161,9 @@ private struct PendingGeneration: Codable {
         return data
     }
     func load(_ credential: DeviceCredential?) async {
+        let changed = activeCredential?.deviceID != credential?.deviceID || activeCredential?.server != credential?.server
         activeCredential = credential
-        models = []; outputs = []
+        if changed || credential == nil { models = []; outputs = []; jobs = []; localJob = nil }
         guard let credential else { return }
         do {
             struct Catalog: Decodable { let models: [GenerationModel] }
@@ -138,7 +176,8 @@ private struct PendingGeneration: Codable {
     func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String) async {
         guard !busy, pending == nil else { error = "Resume the pending generation before starting another."; return }
         activeCredential = credential
-        busy = true; error = nil; logs = ""; status = "Submitting…"
+        busy = true; error = nil
+        localJob = GenerationJob(id: "submission-" + UUID().uuidString, model: model.displayName, prompt: prompt, status: "submitting", latestStatus: "Submitting…")
         defer { busy = false }
         do {
             var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale]
@@ -147,26 +186,37 @@ private struct PendingGeneration: Codable {
                 body["seed"] = value
             }
             let reply = try JSONDecoder().decode(Prediction.self, from: await request("generate", credential: credential, body: body))
+            localJob = GenerationJob(id: reply.id, model: model.displayName, prompt: prompt, status: reply.status, latestStatus: reply.latestStatus ?? reply.status.capitalized)
             pending = PendingGeneration(id: reply.id, server: credential.server, deviceID: credential.deviceID, model: model.displayName, prompt: prompt)
             try savePending()
             try await monitor()
-        } catch { self.error = error.localizedDescription; status = pending == nil ? "Submission failed" : "Updates paused · Tap Resume" }
+        } catch {
+            self.error = error.localizedDescription
+            updateLocal(status: pending == nil ? "failed" : "paused", message: pending == nil ? "Submission failed" : "Updates paused")
+        }
     }
     func resume() async {
         guard pending != nil, !busy else { return }
         busy = true; defer { busy = false }
-        do { try await monitor() } catch { self.error = error.localizedDescription; status = "Updates paused · Tap Resume" }
+        do { try await monitor() } catch {
+            self.error = error.localizedDescription
+            updateLocal(status: "paused", message: "Updates paused")
+        }
     }
     var hasPending: Bool { pending != nil }
     private func monitor() async throws {
         guard let job = pending else { return }
         guard let credential = activeCredential, credential.server == job.server, credential.deviceID == job.deviceID else { throw NSError(domain: "Generation", code: 3, userInfo: [NSLocalizedDescriptionKey: "Reconnect to the server used for this generation."]) }
+        if localJob?.id != job.id {
+            localJob = GenerationJob(id: job.id, model: job.model, prompt: job.prompt, status: "starting", latestStatus: "Checking status…")
+        }
         while true {
             let reply = try JSONDecoder().decode(Prediction.self, from: await request("prediction", credential: credential, id: job.id))
-            status = reply.status.capitalized; logs = reply.logs ?? ""
+            updateLocal(status: reply.status, message: reply.latestStatus ?? reply.status.capitalized)
             if reply.status == "succeeded" {
-                try finish(); status = "Saved to server gallery"
+                try finish()
                 await refreshGallery()
+                localJob = nil
                 return
             }
             if ["failed", "canceled"].contains(reply.status) { try finish(); error = reply.error ?? "Generation \(reply.status)."; return }
