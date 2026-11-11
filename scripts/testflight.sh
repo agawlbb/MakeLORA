@@ -14,12 +14,13 @@ python3 - <<'PY'
 import os, plistlib
 from pathlib import Path
 apps=list(Path('build/MakeLORA.xcarchive/Products/Applications').glob('*.app'))
-assert len(apps)==1, 'Expected one iPad application'
+assert len(apps)==1, 'Expected one iOS application'
 info=plistlib.loads((apps[0]/'Info.plist').read_bytes())
 assert info['CFBundleIdentifier']=='dev.makelora.app'
 assert info['CFBundleVersion']==os.environ['BUILD_NUMBER']
-assert info['UIDeviceFamily']==[2], 'Expected an iPad-only application'
-assert set(info['UISupportedInterfaceOrientations~ipad'])=={'UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'}
+assert set(info['UIDeviceFamily'])=={1,2}, 'Expected an iPhone and iPad application'
+assert info['UISupportedInterfaceOrientations']==['UIInterfaceOrientationPortrait']
+assert set(info['UISupportedInterfaceOrientations~ipad'])=={'UIInterfaceOrientationPortrait','UIInterfaceOrientationPortraitUpsideDown','UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'}
 Path('build/ExportOptions.plist').write_bytes(plistlib.dumps({
   'method':'app-store-connect','teamID':os.environ['IOS_TEAM_ID'],
   'signingStyle':'automatic','manageAppVersionAndBuildNumber':False,'destination':'export'}))

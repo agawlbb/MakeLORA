@@ -1,11 +1,11 @@
 # Build and TestFlight
 
-The workflows follow [FanControlWatch](https://github.com/agawlbb/FanControlWatch)'s existing procedure, adapted to one iPad app with no Watch target or push capabilities.
+The workflows follow [FanControlWatch](https://github.com/agawlbb/FanControlWatch)'s existing procedure, adapted to one iPhone and iPad app with no Watch target or push capabilities.
 
 - Apple team: `FKR675M7PM`
 - Bundle identifier: `dev.makelora.app`
 - Initial version: `0.1.0`
-- Supported devices: iPad, both landscape orientations; iPadOS 17+
+- Supported devices: iPhone in portrait and iPad in portrait or either landscape orientation; iOS/iPadOS 17+
 
 ## One-time setup
 

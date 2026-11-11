@@ -11,7 +11,7 @@ struct ProjectSummary: Identifiable {
 @MainActor final class ProjectStore: ObservableObject {
     @Published private(set) var projects: [ProjectSummary] = []
     @Published private(set) var project: Project?
-    @Published private(set) var status = "Saved on this iPad"
+    @Published private(set) var status = "Saved on this device"
     @Published var error: String?
     @Published private(set) var busy = false
     let engine = ImageEngine()
@@ -158,7 +158,7 @@ struct ProjectSummary: Identifiable {
         }
     }
     func report(_ operation: String, _ cause: Error) {
-        error = "\(operation) failed. \(cause.localizedDescription) Check available iPad storage and the source files, then retry the operation."
+        error = "\(operation) failed. \(cause.localizedDescription) Check available device storage and the source files, then retry the operation."
         status = needsRetry ? "Dataset needs attention · tap Retry" : "Operation failed · changes may not be saved"
     }
 }

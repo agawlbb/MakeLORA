@@ -1,12 +1,12 @@
 # MakeLORA
 
-An offline, landscape iPad app for preparing paired-image datasets for image-editing models. Requires iPadOS 17 or later.
+An offline iPhone and iPad app for preparing paired-image datasets for image-editing models. Requires iOS or iPadOS 17 or later. iPhones use portrait orientation; iPads support portrait and landscape. Portrait uses a full-width library and a separate pair editor, with stacked image cards on narrow displays. Landscape iPads use a two-pane workspace with side-by-side image comparisons.
 
 Create a project and import photos from Photos or Files, including HEIC, JPEG and PNG. Choose a control (starting image) and a target (desired result), then describe the transformation. Photos can be reused in any number of pairs.
 
 Crop each side independently or apply the same relative crop to both. Drag a crop rectangle or use percentage sliders; reset restores the full image. Crop settings belong to each pair and never modify the originals. Replace either photo, swap the two sides with their crops, or delete a pair without deleting library images. Swapping keeps the caption so you can rewrite it for the reversed transformation.
 
-Changes save automatically on the iPad. Generated files update after editing pauses. Export waits for generation to finish and opens the system share sheet: choose **Save to Files**, AirDrop, or another sharing destination.
+Changes save automatically on the device. Generated files update after editing pauses. Export waits for generation to finish and opens the system share sheet: choose **Save to Files**, AirDrop, or another sharing destination.
 
 Every dataset ZIP contains only:
 
@@ -37,7 +37,9 @@ open MakeLORA.xcodeproj
 
 The Xcode project is generated from `project.yml`. The app has no third-party runtime dependencies. The Swift package contains project models, validation and streaming ZIP creation. UIKit/ImageIO handle HEIC decoding, orientation, previews and JPG generation.
 
-GitHub Actions validates the Swift package and runs application tests on an iPad simulator. Signing and TestFlight use a separate manual workflow. See [release setup](RELEASE.md).
+GitHub Actions validates the Swift package and runs application tests on an iPad simulator. Before release, check an iPhone in portrait and an iPad in portrait and landscape: import photos, create/select a pair, replace and crop each image, edit a caption with the keyboard open, and export. Rotate the iPad while editing and verify the selected pair and edits survive. Check the smallest supported screen and larger accessibility text sizes.
+
+Signing and TestFlight use a separate manual workflow. See [release setup](RELEASE.md).
 
 Licensed under the repository's GPL license. Release scripts and workflow structure are adapted from the same owner's GPL-licensed FanControlWatch project.
 

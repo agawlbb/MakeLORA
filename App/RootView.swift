@@ -25,19 +25,19 @@ struct RootView: View {
                             if store.projects.isEmpty {
                                 ContentUnavailableView("Your first dataset starts here", systemImage: "rectangle.stack.badge.plus", description: Text("Create a project, import photos, then pair a control image with a target."))
                             }
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260))], spacing: 18) {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 240))], spacing: 18) {
                                 ForEach(store.projects) { summary in
                                     Button { store.open(summary) } label: {
                                         VStack(alignment: .leading, spacing: 24) {
                                             Image(systemName: "square.stack.3d.up").font(.largeTitle).foregroundStyle(accent)
                                             Text(summary.name).font(.title2.bold()).lineLimit(2)
-                                            Text("\(summary.count) pairs · On this iPad").font(.subheadline).foregroundStyle(.secondary)
+                                            Text("\(summary.count) pairs · On this device").font(.subheadline).foregroundStyle(.secondary)
                                         }.frame(maxWidth: .infinity, minHeight: 160, alignment: .leading).padding(24)
-                                            .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 20))
+                                        .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 20))
                                     }.buttonStyle(.plain)
                                 }
                             }
-                        }.padding(32)
+                        }.padding(20)
                     }
                     .navigationTitle("MakeLORA")
                     .toolbar { Button("Server", systemImage: "server.rack") { serverSettings = true }; Button("New project", systemImage: "plus") { projectName = ""; newProject = true }.buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black) }
@@ -76,77 +76,43 @@ struct WorkspaceView: View {
     @State private var share: ExportItem?
     private var project: Project { store.project ?? Project(name: "") }
     var body: some View {
-        NavigationStack {
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Text("WORKSPACE").font(.caption.weight(.semibold)).tracking(2).foregroundStyle(.secondary)
-                        Spacer()
-                        Menu {
-                            Button("Rename project", systemImage: "pencil") { name = project.name; rename = true }
-                            Button("Delete project…", systemImage: "trash", role: .destructive) { deleteProject = true }
-                        } label: { Image(systemName: "ellipsis.circle").font(.title3) }.accessibilityLabel("Project actions")
-                    }
-                    Picker("Workspace section", selection: $tab) { Text("Pairs (\(project.pairs.count))").tag(0); Text("Photos (\(project.photos.count))").tag(1) }.pickerStyle(.segmented)
-                    if tab == 0 {
-                        Button { newPair = true } label: { Label("New pair", systemImage: "plus").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(project.photos.isEmpty)
-                        if project.pairs.isEmpty { Text("Import photos, then create your first pair.").foregroundStyle(.secondary).padding(.vertical) }
-                        ScrollView {
-                            LazyVStack(spacing: 8) {
-                                ForEach(project.pairs) { pair in
-                                    Button { selectedPair = pair.id } label: {
-                                        HStack(spacing: 8) {
-                                            PhotoThumbnail(photoID: pair.control, crop: pair.controlCrop, maximum: 200).frame(width: 54, height: 54).clipped()
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text("Pair \(pair.id)").fontWeight(.semibold)
-                                                Text(pair.caption.isEmpty ? "Add a transformation caption" : pair.caption).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                            }
-                                            Spacer(minLength: 0)
-                                        }.padding(8).background(selectedPair == pair.id ? accent.opacity(0.15) : .white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-                                    }.buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    } else {
-                        ScrollView {
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                                ForEach(project.photos) { photo in
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        PhotoThumbnail(photoID: photo.id, maximum: 250).frame(height: 105).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
-                                        Text(photo.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                    }.accessibilityElement(children: .combine)
-                                }
-                            }
+        GeometryReader { geometry in
+            let wide = geometry.size.width >= 900 && geometry.size.width > geometry.size.height
+            NavigationStack {
+                HStack(spacing: 0) {
+                    workspaceLibrary.frame(width: wide ? 280 : nil)
+                    if wide {
+                        Divider()
+                        if let id = selectedPair, project.pairs.contains(where: { $0.id == id }) {
+                            PairEditor(pairID: id).id(id).frame(maxWidth: .infinity)
+                        } else {
+                            VStack(spacing: 20) {
+                                Image(systemName: "rectangle.on.rectangle.angled").font(.system(size: 56)).foregroundStyle(accent)
+                                Text("Every edit starts with a pair").font(.title.bold())
+                                Text("Choose the starting image and the desired result,\nthen describe what changed.").multilineTextAlignment(.center).foregroundStyle(.secondary)
+                                Button("Create a pair", systemImage: "plus") { newPair = true }.buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(project.photos.isEmpty)
+                            }.frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
-                    Spacer(minLength: 0)
-                    Menu {
-                        PhotosPicker(selection: $photoItems, maxSelectionCount: 100, matching: .images, preferredItemEncoding: .current) { Label("From Photos", systemImage: "photo.on.rectangle") }
-                        Button("From Files", systemImage: "folder") { importFiles = true }
-                    } label: { Label("Import photos", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity) }.buttonStyle(.bordered)
-                    Text("HEIC, JPEG & PNG originals\nDataset images always export as JPG.").font(.caption2).foregroundStyle(.secondary)
-                }.padding(18).frame(width: 280).background(.white.opacity(0.025))
-                Divider()
-                if let id = selectedPair, project.pairs.contains(where: { $0.id == id }) {
-                    PairEditor(pairID: id).id(id).frame(maxWidth: .infinity)
-                } else {
-                    VStack(spacing: 20) {
-                        Image(systemName: "rectangle.on.rectangle.angled").font(.system(size: 56)).foregroundStyle(accent)
-                        Text("Every edit starts with a pair").font(.title.bold())
-                        Text("Choose the starting image and the desired result,\nthen describe what changed.").multilineTextAlignment(.center).foregroundStyle(.secondary)
-                        Button("Create a pair", systemImage: "plus") { newPair = true }.buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(project.photos.isEmpty)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            }
-            .navigationTitle(project.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Projects", systemImage: "chevron.left") { store.close() } }
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
-                        Text(store.status).font(.caption).foregroundStyle(.secondary)
-                        Button("Retry", systemImage: "arrow.clockwise") { store.retry() }.font(.caption)
-                        Button("Export dataset", systemImage: "square.and.arrow.up") { Task { if let url = await store.export() { share = ExportItem(url: url) } } }.buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(project.pairs.isEmpty)
+                .navigationDestination(isPresented: Binding(
+                    get: { !wide && selectedPair != nil },
+                    set: { if !$0 && !wide { selectedPair = nil } }
+                )) {
+                    if let id = selectedPair {
+                        PairEditor(pairID: id).navigationTitle("Pair \(id)")
+                            .navigationBarTitleDisplayMode(.inline)
+                    }
+                }
+                .navigationTitle(project.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button("Projects", systemImage: "chevron.left") { store.close() } }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        HStack(spacing: 12) {
+                            Button("Retry", systemImage: "arrow.clockwise") { store.retry() }.labelStyle(.iconOnly)
+                            Button("Export dataset", systemImage: "square.and.arrow.up") { Task { if let url = await store.export() { share = ExportItem(url: url) } } }.labelStyle(.iconOnly).buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(project.pairs.isEmpty)
+                        }
                     }
                 }
             }
@@ -194,7 +160,61 @@ struct WorkspaceView: View {
         .confirmationDialog("Delete \(project.name) and all its originals and pairs? This cannot be undone.", isPresented: $deleteProject, titleVisibility: .visible) {
             Button("Delete project", role: .destructive) { store.deleteProject() }
         }
-        .onAppear { selectedPair = project.pairs.first?.id; cleanupExports() }
+        .onAppear { cleanupExports() }
+        .onChange(of: project.pairs.map(\.id)) { _, ids in
+            if let selectedPair, !ids.contains(selectedPair) { self.selectedPair = nil }
+        }
+    }
+    private var workspaceLibrary: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("WORKSPACE").font(.caption.weight(.semibold)).tracking(2).foregroundStyle(.secondary)
+                Spacer()
+                Menu {
+                    Button("Rename project", systemImage: "pencil") { name = project.name; rename = true }
+                    Button("Delete project…", systemImage: "trash", role: .destructive) { deleteProject = true }
+                } label: { Image(systemName: "ellipsis.circle").font(.title3) }.accessibilityLabel("Project actions")
+            }
+            Picker("Workspace section", selection: $tab) { Text("Pairs (\(project.pairs.count))").tag(0); Text("Photos (\(project.photos.count))").tag(1) }.pickerStyle(.segmented)
+            if tab == 0 {
+                Button { newPair = true } label: { Label("New pair", systemImage: "plus").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent).foregroundStyle(.black).disabled(project.photos.isEmpty)
+                if project.pairs.isEmpty { Text("Import photos, then create your first pair.").foregroundStyle(.secondary).padding(.vertical) }
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(project.pairs) { pair in
+                            Button { selectedPair = pair.id } label: {
+                                HStack(spacing: 8) {
+                                    PhotoThumbnail(photoID: pair.control, crop: pair.controlCrop, maximum: 200).frame(width: 54, height: 54).clipped()
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Pair \(pair.id)").fontWeight(.semibold)
+                                        Text(pair.caption.isEmpty ? "Add a transformation caption" : pair.caption).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                    Spacer(minLength: 0)
+                                }.padding(8).background(selectedPair == pair.id ? accent.opacity(0.15) : .white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        ForEach(project.photos) { photo in
+                            VStack(alignment: .leading, spacing: 5) {
+                                PhotoThumbnail(photoID: photo.id, maximum: 250).frame(height: 105).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
+                                Text(photo.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }.accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            Menu {
+                PhotosPicker(selection: $photoItems, maxSelectionCount: 100, matching: .images, preferredItemEncoding: .current) { Label("From Photos", systemImage: "photo.on.rectangle") }
+                Button("From Files", systemImage: "folder") { importFiles = true }
+            } label: { Label("Import photos", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity) }.buttonStyle(.bordered)
+            Text(store.status).font(.caption).foregroundStyle(.secondary)
+            Text("HEIC, JPEG & PNG originals\nDataset images always export as JPG.").font(.caption2).foregroundStyle(.secondary)
+        }.padding(18).frame(maxWidth: .infinity).background(.white.opacity(0.025))
     }
     private func cleanupExports() {
         let fm = FileManager.default
