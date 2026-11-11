@@ -6,8 +6,8 @@ if (!in_array($argc,[2,3],true) || !is_file($argv[1])) { fwrite(STDERR,"Usage: p
 $displayName=trim($argv[2] ?? str_replace(['_','-'],' ',pathinfo($argv[1],PATHINFO_FILENAME)));
 if ($displayName === '' || preg_match('//u',$displayName)!==1 || strlen($displayName)>255) { throw new InvalidArgumentException('Display name must be valid UTF-8 and 1–255 bytes'); }
 $config = require (getenv('MAKELORA_CONFIG') ?: '/home/dev/projects/.test-config/makelora.php');
-if (($config['environment'] ?? '') !== 'prototype') { throw new RuntimeException('VM prototype configuration required'); }
-$root = dirname(__DIR__).'/storage/files';
+if (!in_array($config['environment'] ?? '', ['prototype', 'production'], true)) { throw new RuntimeException('MakeLORA configuration required'); }
+$root = $config['file_storage_directory'] ?? dirname(__DIR__).'/storage/files';
 if (!is_dir($root) && !mkdir($root,0700,true)) { throw new RuntimeException('Cannot create storage'); }
 $temp = tempnam($root,'.import-');
 if ($temp === false) { throw new RuntimeException('Cannot create import snapshot'); }

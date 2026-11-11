@@ -1,0 +1,6 @@
+DirectorySlash Off
+RewriteEngine On
+RewriteOptions AllowNoSlash
+RewriteCond %{HTTP:X-Forwarded-Proto} !^https$ [NC]
+RewriteRule ^ - [F,L]
+RewriteRule ^(?!gateway\.php$) gateway.php [END]
