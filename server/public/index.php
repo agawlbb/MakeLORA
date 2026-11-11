@@ -14,9 +14,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     if ($action==='save_replicate' || $action==='remove_replicate') {
         if (!$privateSession) { http_response_code(503); exit('Private token storage is not configured.'); }
         if ($action==='remove_replicate') {
-            unset($_SESSION['replicate_token']);
+            removeReplicateToken($config['private_session_directory']);
             $_SESSION['token_notice']='Replicate token removed.';
-        } elseif (saveReplicateToken($_POST['replicate_token'] ?? null)) {
+        } elseif (saveReplicateToken($config['private_session_directory'], $_POST['replicate_token'] ?? null)) {
             $_SESSION['token_notice']='Replicate token saved.';
         } else {
             $_SESSION['token_notice']='Enter a token of 1–512 characters without spaces.';
@@ -52,14 +52,11 @@ unset($_SESSION['token_notice']);
 <h2 id="replicate-heading">Replicate API token</h2>
 <?php if ($tokenNotice): ?><p role="status"><?=escape($tokenNotice)?></p><?php endif ?>
 <?php if (!$privateSession): ?><p>Private token storage is not configured on this server.</p>
-<?php elseif (isset($_SESSION['replicate_token'])): ?>
-<p>A token is saved for this browser session. It will not be displayed.</p>
+<?php elseif (is_file($config['private_session_directory'].'/replicate-token')): ?>
 <form method="post"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>"><button name="action" value="remove_replicate">Remove token</button></form>
 <?php else: ?>
-<p>No token saved. Your token is stored privately on the server for this browser session. Other browsers cannot manage it. Closing or clearing your session may lose access; remove it here first.</p>
 <form method="post" autocomplete="off"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>">
-<label for="replicate-token">API token</label>
-<input id="replicate-token" name="replicate_token" type="password" required maxlength="512" autocomplete="off" spellcheck="false" autocapitalize="none">
+<input id="replicate-token" aria-label="Replicate API token" name="replicate_token" type="password" required maxlength="512" autocomplete="off" spellcheck="false" autocapitalize="none">
 <button name="action" value="save_replicate">Save token</button></form>
 <?php endif ?>
 </section>

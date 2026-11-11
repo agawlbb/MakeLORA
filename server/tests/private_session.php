@@ -15,29 +15,33 @@ try {
     session_id(bin2hex(random_bytes(16)));
     session_start();
     $first = session_id();
-    check(saveReplicateToken('synthetic-test-secret'));
-    check(!saveReplicateToken(['invalid']));
-    check(!saveReplicateToken("invalid\nvalue"));
-    check(!saveReplicateToken(str_repeat('a', 513)));
+    check(saveReplicateToken($directory, 'synthetic-test-secret'));
+    check(!saveReplicateToken($directory, ['invalid']));
+    check(!saveReplicateToken($directory, "invalid\nvalue"));
+    check(!saveReplicateToken($directory, str_repeat('a', 513)));
     session_write_close();
     $file = $directory.'/sess_'.$first;
     check((fileperms($file) & 0777) === 0600);
     session_id(bin2hex(random_bytes(16)));
     session_start();
     check(!isset($_SESSION['replicate_token']));
+    check(readReplicateToken($directory) === 'synthetic-test-secret');
     session_write_close();
     session_id($first);
     session_start();
-    check($_SESSION['replicate_token'] === 'synthetic-test-secret');
-    unset($_SESSION['replicate_token']);
+    check(!isset($_SESSION['replicate_token']));
+    check(readReplicateToken($directory) === 'synthetic-test-secret');
+    check((fileperms($directory.'/replicate-token') & 0777) === 0600);
+    removeReplicateToken($directory);
     session_write_close();
     check(!str_contains(file_get_contents($file), 'synthetic-test-secret'));
     session_id($first);
     session_start();
     check(!isset($_SESSION['replicate_token']));
+    check(readReplicateToken($directory) === null);
     session_write_close();
 } finally {
-    foreach (glob($directory.'/sess_*') as $file) { unlink($file); }
+    foreach (glob($directory.'/*') as $file) { unlink($file); }
     rmdir($directory);
 }
-echo "Private session storage, isolation and removal passed.\n";
+echo "Persistent token storage, cross-session availability, permissions and removal passed.\n";

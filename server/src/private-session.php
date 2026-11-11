@@ -18,12 +18,38 @@ function configurePrivateSession(?string $directory): bool
     return true;
 }
 
-function saveReplicateToken(mixed $value): bool
+function saveReplicateToken(string $directory, mixed $value): bool
 {
     // Accept printable ASCII without whitespace; never echo submitted input.
     if (!is_string($value) || !preg_match('/\A[\x21-\x7e]{1,512}\z/D', $value)) {
         return false;
     }
-    $_SESSION['replicate_token'] = $value;
+    $temporary = tempnam($directory, '.replicate-');
+    if ($temporary === false) { throw new RuntimeException('Token storage unavailable.'); }
+    try {
+        if (!chmod($temporary, 0600) || file_put_contents($temporary, $value, LOCK_EX) !== strlen($value) ||
+            !rename($temporary, $directory.'/replicate-token')) {
+            throw new RuntimeException('Token storage unavailable.');
+        }
+    } finally {
+        if (is_file($temporary)) { unlink($temporary); }
+    }
     return true;
+}
+
+// Server-side provider requests use this credential for active paired devices.
+// Never include its return value in a device response.
+function readReplicateToken(string $directory): ?string
+{
+    $file = $directory.'/replicate-token';
+    if (!is_file($file)) { return null; }
+    $token = file_get_contents($file);
+    if ($token === false) { throw new RuntimeException('Token storage unavailable.'); }
+    return $token;
+}
+
+function removeReplicateToken(string $directory): void
+{
+    $file = $directory.'/replicate-token';
+    if (is_file($file) && !unlink($file)) { throw new RuntimeException('Token removal failed.'); }
 }

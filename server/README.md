@@ -46,30 +46,28 @@ redirects. No server address or credential is embedded in the app.
 
 ### Replicate token storage
 
-The frontend accepts a Replicate API token through a password field and shows
-only saved/absent status afterwards. Save and remove require the management
-session's CSRF token. Tokens are never returned in HTML or device API responses,
-and this feature makes no Replicate requests or jobs.
+The frontend accepts a Replicate API token through a password field. Once saved,
+only the remove control is shown. Save and remove require a session CSRF token.
+The credential is persistent and shared by the server's paired devices; browser
+session expiry does not affect it. Provider requests must run server-side using
+`readReplicateToken`, after verifying an active device credential. The token is
+never sent to devices or returned in HTML. No provider jobs are started here.
 
-Before enabling it, create a directory outside every Git checkout and web
-document root, owned by the PHP runtime user with mode **0700**, and set
-`private_session_directory` in the private settings file to its absolute path.
-For example use `/var/lib/makelora/private-sessions`, never `server/public` or
-any web alias. The application refuses missing, permissive, or in-repository
-directories. PHP's file session handler writes mode **0600** files there.
-Do not add this directory to public hosting, source control, or request-body logs.
-Treat any separately arranged backups as containing credentials.
+Configure `private_session_directory` in the private settings file to an absolute
+directory outside every Git checkout and public web root. It must be owned by
+the PHP runtime user with mode **0700**. The `replicate-token` file is written
+atomically with mode **0600**, separately from browser sessions. PHP session
+cleanup does not remove it. Removal deletes this file; revoke at Replicate too
+if revocation is needed. Keep this directory and any backups private.
 
-This open prototype has no user accounts: tokens belong to individual browser
-sessions, not the shared management page or paired devices. Removing a token
-rewrites that session without it; revoke it at Replicate too if revocation is
-needed. Losing the session cookie loses access to its saved token. Configure
-normal PHP session garbage collection for this private directory to remove
-expired sessions; session lifetime follows the server's PHP settings. Changing
-the directory also starts fresh management sessions. Shared sign-in is still
+For upgrades from browser-session storage, run `php
+server/bin/migrate-replicate-token.php` as the web runtime user with the existing
+`MAKELORA_CONFIG`. This preserves the most recently modified session's token
+unless a persistent token already exists, and clears credentials from old
+sessions so they cannot restore a removed token. Shared sign-in is still
 required before production deployment.
 
-Verify storage permissions, session isolation and removal inside development:
+Verify storage permissions, cross-session persistence and removal inside development:
 
 ```sh
 dev php /home/dev/projects/MakeLORA/server/tests/private_session.php
