@@ -98,7 +98,7 @@ function latestRetryAttempt(string $id): array|false {
     return query('SELECT * FROM makelora_generation_attempts WHERE generation_id=? ORDER BY attempt_no DESC LIMIT 1',[$id])->fetch();
 }
 function startRetryGeneration(array $input,array $device): array {
-    global $config;
+    global $config,$db;
     $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model'] ?? ''])->fetch();
     if (!$file || !supportedGenerationModel($file['target_model'])) fail('Choose a Qwen-edit weight.');
     generationSettings($input);
@@ -106,10 +106,13 @@ function startRetryGeneration(array $input,array $device): array {
     outputDirectory();
     $id=bin2hex(random_bytes(32)); $now=time();
     $key=retrySavePayload($id,$input);
+    $db->beginTransaction();
     try {
         query("INSERT INTO makelora_generations (id,device_id,model_name,prompt,status,retry_enabled,retry_until,next_retry_at,retry_payload_key,created_at) VALUES (?,?,?,?,'retry_scheduled',1,?,?,?,?)",
             [$id,$device['id'],$file['display_name'],$input['prompt'],retryDate($now+GENERATION_RETRY_WINDOW),retryDate($now),$key,retryDate($now)]);
-    } catch (Throwable $error) { unlink(retryPayloadPath($key)); throw $error; }
+        saveGenerationRecipe($id,$input,$file);
+        $db->commit();
+    } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack(); unlink(retryPayloadPath($key)); throw $error; }
     withRetryLock($id,static function() use ($id): void {
         // A worker may already have claimed the new job.
         if (!latestRetryAttempt($id)) submitRetryAttempt(retryJob($id));
@@ -312,7 +315,7 @@ function purgeExpiredRetryInputs(?int $now=null): void {
     }
 }
 function runGenerationRetryWorker(): int {
-    try { purgeExpiredRetryInputs(); }
+    try { purgeExpiredRetryInputs(); purgeUnusedRecipeInputs(); }
     catch (Throwable $error) { error_log('MakeLORA retry input cleanup deferred: '.get_class($error)); }
     $jobs=query('SELECT id FROM makelora_generations WHERE retry_enabled=1 AND next_retry_at IS NOT NULL AND next_retry_at<=UTC_TIMESTAMP() ORDER BY next_retry_at,id LIMIT 5')->fetchAll();
     foreach ($jobs as $row) {

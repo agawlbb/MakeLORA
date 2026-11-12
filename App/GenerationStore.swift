@@ -15,6 +15,35 @@ struct GenerationOutput: Decodable, Identifiable {
     let prompt: String
     let date: Date
 }
+struct GenerationSettings: Decodable {
+    let modelID: String?
+    let modelName: String
+    let baseModel: String?
+    let prompt: String
+    let aspectRatio: String?
+    let loraScale: Double?
+    let seed: Int?
+    let outputFormat: String?
+    let disableSafetyChecker: Bool?
+    let retryOffline: Bool?
+}
+struct GenerationDetails: Decodable {
+    let legacy: Bool
+    let settings: GenerationSettings
+    let hasInput: Bool
+    let resolvedSeed: Int?
+}
+struct GenerationDraft: Identifiable {
+    let id = UUID()
+    let output: GenerationOutput
+    let details: GenerationDetails
+    func matchingModel(in models: [GenerationModel]) -> GenerationModel? {
+        if let id = details.settings.modelID { return models.first { $0.id == id } }
+        guard details.legacy else { return nil }
+        let matches = models.filter { $0.displayName == details.settings.modelName }
+        return matches.count == 1 ? matches.first : nil
+    }
+}
 struct GenerationJob: Decodable, Identifiable {
     let id: String
     let model: String
@@ -154,6 +183,18 @@ private struct GenerationServiceError: Decodable, LocalizedError {
         guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { throw URLError(.cancelled) }
         return data
     }
+    private func verifiedData(_ action: String, output: GenerationOutput) async throws -> Data {
+        guard let credential = activeCredential else { throw URLError(.userAuthenticationRequired) }
+        let data = try await request(action, credential: credential, id: output.id)
+        guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { throw URLError(.cancelled) }
+        return data
+    }
+    func generationDetails(_ output: GenerationOutput) async throws -> GenerationDetails {
+        try JSONDecoder().decode(GenerationDetails.self, from: await verifiedData("generation_details", output: output))
+    }
+    func originalImage(_ output: GenerationOutput) async throws -> Data {
+        try await verifiedData("generation_input", output: output)
+    }
     func prepareShare(_ output: GenerationOutput) async throws -> URL {
         // A temporary original exists only during the user-requested share sheet.
         let data = try await imageData(output)
@@ -221,7 +262,7 @@ private struct GenerationServiceError: Decodable, LocalizedError {
             await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
-    func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true) async {
+    func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil) async {
         guard !busy else { return }
         activeCredential = credential
         busy = true; error = nil
@@ -229,6 +270,7 @@ private struct GenerationServiceError: Decodable, LocalizedError {
         defer { busy = false }
         do {
             var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale, "retry_offline": retryOffline]
+            if let sourceOutputID { body.removeValue(forKey: "image"); body["source_output_id"] = sourceOutputID }
             if !seed.isEmpty {
                 guard let value = Int(seed), (0...2147483647).contains(value) else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Seed must be a whole number from 0 to 2147483647."]) }
                 body["seed"] = value

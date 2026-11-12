@@ -1,6 +1,7 @@
 <?php
 // php -n: no network, paid jobs, database credentials or persistent files.
 declare(strict_types=1);
+require __DIR__.'/recipe_fake.php';
 foreach (['CURLOPT_RETURNTRANSFER','CURLOPT_TIMEOUT','CURLOPT_HTTPHEADER','CURLOPT_POST','CURLOPT_POSTFIELDS','CURLINFO_RESPONSE_CODE','CURLOPT_FOLLOWLOCATION','CURLOPT_WRITEFUNCTION','CURLOPT_HEADERFUNCTION'] as $i=>$name) define($name,$i+1);
 final class Reply extends RuntimeException { public function __construct(public array $data, public int $status=200) {} }
 function jsonResponse(array $data,int $code=200): never { throw new Reply($data,$code); }
@@ -34,7 +35,8 @@ $db=new class {
 function query(string $sql,array $params=[]): object {
     global $jobs,$images,$file;
     $rows=[]; $affected=0;
-    if (str_starts_with($sql,'INSERT INTO makelora_generations')) {
+    if (str_contains($sql,'makelora_generation_recipes')) $rows=fakeRecipeQuery($sql,$params);
+    elseif (str_starts_with($sql,'INSERT INTO makelora_generations')) {
         [$id,$device,$model,$prompt,$hash]=$params;
         $jobs[$id]=['id'=>$id,'device_id'=>$device,'model_name'=>$model,'prompt'=>$prompt,'callback_hash'=>$hash,'status'=>'starting','provider_id'=>null,'logs'=>null,'dismissed_at'=>null,'next_check_at'=>null];
     } elseif (str_starts_with($sql,'UPDATE makelora_generations SET provider_id')) {
@@ -61,7 +63,7 @@ function query(string $sql,array $params=[]): object {
         [$id,$job,$index,$key]=$params;
         $images[$id]=['id'=>$id,'generation_id'=>$job,'output_index'=>$index,'storage_key'=>$key,'deleted_at'=>null];
     } elseif (str_starts_with($sql,'SELECT id FROM makelora_outputs')) {
-        $rows=array_values(array_filter($images,fn($row)=>$row['generation_id']===$params[0] && $row['output_index']===$params[1]));
+        $rows=array_values(array_filter($images,fn($row)=>$row['generation_id']===$params[0] && (str_contains($sql,'deleted_at IS NULL') ? ($row['deleted_at'] ?? null)===null:$row['output_index']===$params[1])));
     } elseif (str_starts_with($sql,'SELECT * FROM makelora_outputs')) {
         $row=$images[$params[0]] ?? null;
         if ($row && $row['deleted_at']===null) $rows=[$row];
@@ -250,6 +252,8 @@ try {
     $_GET=['sha'=>str_repeat('a',64),'expires'=>(string)(time()-1),'signature'=>'bad'];
     try { serveWeights(); } catch (Reply $reply) { check($reply->status===403,'Expired weights blocked'); }
 } finally {
+    foreach (glob($directory.'/generation-inputs/*') ?: [] as $path) unlink($path);
+    if (is_dir($directory.'/generation-inputs')) rmdir($directory.'/generation-inputs');
     foreach (glob($directory.'/outputs/*') ?: [] as $path) unlink($path);
     if (is_dir($directory.'/outputs')) rmdir($directory.'/outputs');
     if (is_file($directory.'/replicate-token')) unlink($directory.'/replicate-token');

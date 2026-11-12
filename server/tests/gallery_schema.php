@@ -20,6 +20,7 @@ function query(string $sql,array $params=[]): PDOStatement {
     global $db; $statement=$db->prepare($sql); $statement->execute($params); return $statement;
 }
 function fail(string $message,int $status=400): never { throw new RuntimeException($message); }
+$db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',file_get_contents(dirname(__DIR__).'/migrations/008_generation_recipes.sql')));
 require dirname(__DIR__).'/src/generation.php';
 $page=galleryPage();
 if (count($page['jobs'])!==1 || $page['jobs'][0]['latestStatus']!=='Starting…') throw new RuntimeException('Pending gallery SQL failed.');

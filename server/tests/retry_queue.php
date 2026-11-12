@@ -1,12 +1,13 @@
 <?php
 declare(strict_types=1);
+require __DIR__.'/recipe_fake.php';
 // php -n: all provider/SQL behavior is simulated; no paid jobs or credentials.
 foreach (['CURLOPT_RETURNTRANSFER','CURLOPT_TIMEOUT','CURLOPT_HTTPHEADER','CURLOPT_POST','CURLOPT_POSTFIELDS','CURLINFO_RESPONSE_CODE','CURLOPT_FOLLOWLOCATION','CURLOPT_WRITEFUNCTION','CURLOPT_HEADERFUNCTION'] as $i=>$name) define($name,$i+1);
 final class Reply extends RuntimeException { public function __construct(public array $data,public int $status=200) {} }
 function fail(string $message,int $code=400): never { throw new Reply(['error'=>$message],$code); }
 function jsonResponse(array $data,int $code=200): never { throw new Reply($data,$code); }
 function check(bool $value,string $message): void { if (!$value) throw new RuntimeException($message); }
-$jobs=[];$attempts=[];$images=[];$creates=[];$predictions=[];$history=['results'=>[],'next'=>null];$deviceActive=true;$locked=false;$createCode=503;$createState='starting';$historyCode=200;$badDownload=false;$createHook=null;
+$GLOBALS['recipes']=[];$jobs=[];$attempts=[];$images=[];$creates=[];$predictions=[];$history=['results'=>[],'next'=>null];$deviceActive=true;$locked=false;$createCode=503;$createState='starting';$historyCode=200;$badDownload=false;$createHook=null;
 $db=new class {
     private ?array $snapshot=null;
     public function beginTransaction(): void { $this->snapshot=[$GLOBALS['jobs'],$GLOBALS['images'],$GLOBALS['attempts']]; }
@@ -17,7 +18,8 @@ $db=new class {
 function query(string $sql,array $params=[]): object {
     global $jobs,$attempts,$images,$deviceActive,$locked;
     $rows=[];$affected=0;
-    if (str_starts_with($sql,'SELECT GET_LOCK')) $rows=[[0=>$locked ? 0:1]];
+    if (str_contains($sql,'makelora_generation_recipes')) $rows=fakeRecipeQuery($sql,$params);
+    elseif (str_starts_with($sql,'SELECT GET_LOCK')) $rows=[[0=>$locked ? 0:1]];
     elseif (str_starts_with($sql,'SELECT RELEASE_LOCK')) $rows=[[0=>1]];
     elseif (str_starts_with($sql,'INSERT INTO makelora_generations')) {
         [$id,$device,$model,$prompt,$until,$next,$key,$created]=$params;
@@ -56,7 +58,7 @@ function query(string $sql,array $params=[]): object {
     } elseif (str_starts_with($sql,'SELECT status FROM makelora_devices')) $rows=[['status'=>$deviceActive ? 'active':'revoked']];
     elseif (str_starts_with($sql,'SELECT * FROM makelora_files')) $rows=[['sha256'=>str_repeat('a',64),'display_name'=>'Fixture','target_model'=>'Qwen/Qwen-Image-Edit-2509']];
     elseif (str_starts_with($sql,'SELECT id FROM makelora_outputs')) {
-        $rows=array_values(array_filter($images,static fn($image)=>$image['generation_id']===$params[0] && $image['output_index']===$params[1]));
+        $rows=array_values(array_filter($images,static fn($image)=>$image['generation_id']===$params[0] && (str_contains($sql,'deleted_at IS NULL') ? ($image['deleted_at'] ?? null)===null:$image['output_index']===$params[1])));
     } elseif (str_starts_with($sql,'INSERT INTO makelora_outputs')) {
         [$id,$job,$index,$key]=$params;$images[$id]=['id'=>$id,'generation_id'=>$job,'output_index'=>$index,'storage_key'=>$key];
     } else throw new RuntimeException('Unexpected SQL: '.$sql);
@@ -103,8 +105,8 @@ $input=['model'=>str_repeat('a',64),'image'=>'data:image/jpeg;base64,AAAA','prom
 $device=['id'=>'fixture-device','status'=>'active'];
 function resetQueueFixture(): void {
     global $jobs,$attempts,$images,$creates,$predictions,$history,$deviceActive,$locked,$createCode,$createState,$historyCode,$badDownload,$createHook,$root;
-    $jobs=[];$attempts=[];$images=[];$creates=[];$predictions=[];$history=['results'=>[],'next'=>null];$deviceActive=true;$locked=false;$createCode=503;$createState='starting';$historyCode=200;$badDownload=false;$createHook=null;
-    foreach (['retry-inputs','outputs'] as $folder) foreach (glob($root.'/'.$folder.'/*') ?: [] as $path) unlink($path);
+    $GLOBALS['recipes']=[];$jobs=[];$attempts=[];$images=[];$creates=[];$predictions=[];$history=['results'=>[],'next'=>null];$deviceActive=true;$locked=false;$createCode=503;$createState='starting';$historyCode=200;$badDownload=false;$createHook=null;
+    foreach (['retry-inputs','outputs','generation-inputs'] as $folder) foreach (glob($root.'/'.$folder.'/*') ?: [] as $path) unlink($path);
 }
 function forceDue(string $id): void {
     $GLOBALS['jobs'][$id]['next_retry_at']=retryDate(time()-1);
@@ -208,7 +210,7 @@ try {
     catch (RuntimeException $error) { check($error->getMessage()==='Untrusted prediction history page.','History never leaks credentials to another host'); }
     echo "Offline retry scheduling, headless recovery, reconciliation, cancellation, retention, budgets, locking and race checks passed.\n";
 } finally {
-    foreach (['retry-inputs','outputs'] as $folder) {
+    foreach (['retry-inputs','outputs','generation-inputs'] as $folder) {
         foreach (glob($root.'/'.$folder.'/*') ?: [] as $path) unlink($path);
         if (is_dir($root.'/'.$folder)) rmdir($root.'/'.$folder);
     }

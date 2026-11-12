@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/private-session.php';
 require_once __DIR__.'/retry-queue.php';
+require_once __DIR__.'/generation-recipes.php';
 function supportedGenerationModel(?string $model): bool {
     return in_array(strtolower($model ?? ''), ['qwen/qwen-image-edit-2509','qwen-image-edit-2509'], true);
 }
@@ -177,6 +178,8 @@ function archiveGenerationPrediction(array $job,array $prediction,int $outputOff
             $job['logs']="Replicate generation failed$code. Check the image, prompt and LoRA compatibility before submitting again.";
         } elseif ($job['status']==='canceled') { $job['logs']='Generation canceled.'; }
         query('UPDATE makelora_generations SET status=?,logs=? WHERE id=?',[$job['status'],$job['logs'],$job['id']]);
+        $seed=$prediction['input']['seed'] ?? null;
+        if (is_int($seed)) query('UPDATE makelora_generation_recipes SET resolved_seed=? WHERE generation_id=?',[$seed,$job['id']]);
         $db->commit();
         return storedPrediction($job);
     } catch (Throwable $error) {
@@ -213,7 +216,8 @@ function generationWebhook(?array $payload=null): never {
     jsonResponse(['status'=>'received']);
 }
 function startGeneration(array $input, array $device): array {
-    global $config;
+    global $config,$db;
+    $input=resolveGenerationSource($input);
     if (isset($input['retry_offline']) && !is_bool($input['retry_offline'])) fail('Invalid retry option.');
     if ($input['retry_offline'] ?? false) return startRetryGeneration($input,$device);
     $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model'] ?? ''])->fetch();
@@ -227,7 +231,12 @@ function startGeneration(array $input, array $device): array {
     $base=rtrim($config['base_url'],'/').'/api.php?';
     $args['lora_weights']=$base.http_build_query(['action'=>'weights','sha'=>$sha,'expires'=>$expires,'signature'=>hash_hmac('sha256',$sha.':'.$expires,$token)]);
     $id=bin2hex(random_bytes(32)); $callback=bin2hex(random_bytes(32));
-    query('INSERT INTO makelora_generations (id,device_id,model_name,prompt,callback_hash,created_at) VALUES (?,?,?,?,?,UTC_TIMESTAMP())',[$id,$device['id'],$file['display_name'],$input['prompt'],hash('sha256',$callback)]);
+    $db->beginTransaction();
+    try {
+        query('INSERT INTO makelora_generations (id,device_id,model_name,prompt,callback_hash,created_at) VALUES (?,?,?,?,?,UTC_TIMESTAMP())',[$id,$device['id'],$file['display_name'],$input['prompt'],hash('sha256',$callback)]);
+        saveGenerationRecipe($id,$input,$file);
+        $db->commit();
+    } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack(); throw $error; }
     try {
         $prediction=provider('models/qwen/qwen-image-edit-plus-lora/predictions',[
             'input'=>$args,'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$id,'secret'=>$callback]),
@@ -279,8 +288,16 @@ function serveOutput(string $id): never {
     readfile($path); exit;
 }
 function removeOutput(string $id): void {
+    global $db;
     $row=outputRecord($id);
-    query('UPDATE makelora_outputs SET deleted_at=UTC_TIMESTAMP() WHERE id=? AND deleted_at IS NULL',[$id]);
+    $db->beginTransaction();
+    try {
+        $job=query('SELECT * FROM makelora_generations WHERE id=? FOR UPDATE',[$row['generation_id']])->fetch();
+        query('UPDATE makelora_outputs SET deleted_at=UTC_TIMESTAMP() WHERE id=? AND deleted_at IS NULL',[$id]);
+        $inputPath=cleanRecipeInputLocked($job,true);
+        $db->commit();
+    } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack();throw $error; }
+    if ($inputPath && is_file($inputPath) && !unlink($inputPath)) throw new RuntimeException('Could not remove original image.');
     $path=outputDirectory().'/'.basename($row['storage_key']);
     if (is_file($path) && !unlink($path)) throw new RuntimeException('Could not remove output file.');
 }
@@ -302,6 +319,11 @@ function generationAPI(string $action, array $device): void {
     }
     if ($action==='dismiss_generation' && $method==='POST') {
         dismissGeneration($_GET['id'] ?? ''); jsonResponse(['status'=>'dismissed']);
+    }
+    if ($action==='generation_details' && $method==='GET') jsonResponse(generationDetails($_GET['id'] ?? ''));
+    if ($action==='generation_input' && $method==='GET') {
+        $bytes=originalImageForOutput($_GET['id'] ?? '');
+        header('Content-Type: image/jpeg');header('Content-Length: '.strlen($bytes));echo $bytes;exit;
     }
     if ($action==='gallery' && $method==='GET') jsonResponse(galleryPage($_GET['before'] ?? ''));
     if ($action==='output' && $method==='GET') serveOutput($_GET['id'] ?? '');
