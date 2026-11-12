@@ -171,7 +171,8 @@ The fixed provider endpoint is `qwen/qwen-image-edit-plus-lora`, with JPG output
 and safety checking disabled.
 
 The server supplies a one-hour signed `action=weights` URL to Replicate for the
-selected private weight. This authorizes only that file and exposes no
+selected private weight. Both GET and HEAD require the same valid signature;
+HEAD returns size/type without model bytes. This authorizes only that file and exposes no
 device/provider token. It expires independently of device revocation and becomes
 invalid if the provider token changes.
 
@@ -236,6 +237,7 @@ Inside development, run:
 
 ```sh
 php -n server/tests/generation.php
+php -n server/tests/weight_download.php
 php server/tests/gallery_schema.php
 ```
 

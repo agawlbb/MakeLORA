@@ -6,7 +6,7 @@ try {
     $action = $_GET['action'] ?? '';
     require_once dirname(__DIR__).'/src/generation.php';
     if ($action==='generation_webhook' && $_SERVER['REQUEST_METHOD']==='POST') generationWebhook();
-    if ($action==='weights' && $_SERVER['REQUEST_METHOD']==='GET') serveWeights();
+    if ($action==='weights' && in_array($_SERVER['REQUEST_METHOD'],['GET','HEAD'],true)) serveWeights();
     if ($action === 'redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 4096) fail('Request too large.',413);
         $raw = file_get_contents('php://input', false, null, 0, 4097);

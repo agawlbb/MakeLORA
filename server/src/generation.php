@@ -67,7 +67,9 @@ function serveWeights(): never {
     $path=($config['file_storage_directory'] ?? dirname(__DIR__).'/storage/files').'/'.basename($file['storage_key']);
     if (!is_file($path)) fail('Weight unavailable.',404);
     header('Content-Disposition: attachment; filename="weights.safetensors"');
-    header('Content-Type: application/octet-stream'); header('Content-Length: '.filesize($path)); readfile($path); exit;
+    header('Content-Type: application/octet-stream'); header('Content-Length: '.filesize($path));
+    if ($_SERVER['REQUEST_METHOD']!=='HEAD') readfile($path);
+    exit;
 }
 // Originals remain private; only authenticated device requests serve images.
 function outputDirectory(): string {
