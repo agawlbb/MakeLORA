@@ -3,10 +3,9 @@ declare(strict_types=1);
 require_once __DIR__.'/private-session.php';
 require_once __DIR__.'/retry-queue.php';
 require_once __DIR__.'/generation-recipes.php';
-function supportedGenerationModel(?string $model): bool {
-    return in_array(strtolower($model ?? ''), ['qwen/qwen-image-edit-2509','qwen-image-edit-2509'], true);
-}
-function generationSettings(array $input): array {
+require_once __DIR__.'/generation-models.php';
+require_once __DIR__.'/video-output.php';
+function qwenGenerationSettings(array $input): array {
     $prompt=$input['prompt'] ?? ''; $image=$input['image'] ?? ''; $ratio=$input['aspect_ratio'] ?? 'match_input_image'; $scale=$input['lora_scale'] ?? 1;
     if (!is_string($prompt) || trim($prompt)==='' || strlen($prompt)>10000 || !is_string($image) || !preg_match('#^data:image/jpeg;base64,[A-Za-z0-9+/=]+$#D',$image) || !in_array($ratio,['match_input_image','1:1','16:9','9:16','4:3','3:4'],true) || !is_numeric($scale) || $scale<0 || $scale>4) fail('Invalid generation settings.');
     $args=['image'=>[$image],'prompt'=>$prompt,'aspect_ratio'=>$ratio,'lora_scale'=>(float)$scale,'output_format'=>'jpg','disable_safety_checker'=>true];
@@ -80,7 +79,7 @@ function outputDirectory(): string {
     if (!is_dir($root) && !mkdir($root,0700,true) && !is_dir($root)) throw new RuntimeException('Output storage unavailable.');
     return $root;
 }
-function downloadOutput(string $url, string $path): void {
+function downloadOutput(string $url, string $path,bool $video=false): void {
     $parts=parse_url($url);
     $host=strtolower($parts['host'] ?? '');
     if (($parts['scheme'] ?? '')!=='https' || !($host==='replicate.delivery' || str_ends_with($host,'.replicate.delivery')) ||
@@ -90,15 +89,16 @@ function downloadOutput(string $url, string $path): void {
     chmod($path,0600);
     $curl=curl_init($url); $size=0;
     try {
-        curl_setopt_array($curl,[CURLOPT_TIMEOUT=>60,CURLOPT_FOLLOWLOCATION=>false,
-            CURLOPT_WRITEFUNCTION=>static function($handle,string $data) use ($file,&$size): int {
+        curl_setopt_array($curl,[CURLOPT_TIMEOUT=>180,CURLOPT_FOLLOWLOCATION=>false,
+            CURLOPT_WRITEFUNCTION=>static function($handle,string $data) use ($file,&$size,$video): int {
                 $size+=strlen($data);
-                if ($size>50_000_000) return 0;
+                if ($size>($video ? 250_000_000:50_000_000)) return 0;
                 return fwrite($file,$data);
             }]);
         $ok=curl_exec($curl); $code=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);
         if ($ok===false || $code!==200) throw new RuntimeException('Could not archive output.');
     } finally { curl_close($curl); fclose($file); }
+    if ($video) { validateVideoOutput($path); return; }
     $info=@getimagesize($path);
     if (!$info || ($info['mime'] ?? '')!=='image/jpeg') throw new RuntimeException('Invalid output image.');
 }
@@ -153,6 +153,8 @@ function archiveGenerationPrediction(array $job,array $prediction,int $outputOff
         if ($preserveState && $prediction['status']!=='succeeded') { $db->commit(); return storedPrediction($job); }
         if ($prediction['status']==='succeeded') {
             $urls=$prediction['output'] ?? [];
+            if (is_string($urls)) $urls=[$urls];
+            $video=($job['model_family'] ?? 'qwen')==='wan';
             if (!is_array($urls) || !$urls) throw new RuntimeException('Missing provider outputs.');
             foreach ($urls as $index=>$url) {
                 if (!is_int($index) || $index<0 || $index>=10000) throw new RuntimeException('Invalid output index.');
@@ -160,15 +162,15 @@ function archiveGenerationPrediction(array $job,array $prediction,int $outputOff
                 // Tombstones prevent retries from recreating removed gallery images.
                 if (query('SELECT id FROM makelora_outputs WHERE generation_id=? AND output_index=?',[$job['id'],$index])->fetch()) continue;
                 $id=sprintf('%016x',(int)(microtime(true)*1000000)).bin2hex(random_bytes(24));
-                $filename=$id.'.jpg'; $destination=outputDirectory().'/'.$filename;
+                $filename=$id.($video ? '.mp4':'.jpg'); $destination=outputDirectory().'/'.$filename;
                 $temporary=tempnam(outputDirectory(),'.output-');
                 if ($temporary===false) throw new RuntimeException('Output storage unavailable.');
                 try {
-                    downloadOutput($url,$temporary);
+                    downloadOutput($url,$temporary,$video);
                     if (!rename($temporary,$destination)) throw new RuntimeException('Output storage unavailable.');
                     $written[]=$destination;
                 } finally { if (is_file($temporary)) unlink($temporary); }
-                query('INSERT INTO makelora_outputs (id,generation_id,output_index,storage_key,created_at) VALUES (?,?,?,?,UTC_TIMESTAMP())',[$id,$job['id'],$index,$filename]);
+                query('INSERT INTO makelora_outputs (id,generation_id,output_index,storage_key,media_type,mime_type,created_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP())',[$id,$job['id'],$index,$filename,$video ? 'video':'image',$video ? 'video/mp4':'image/jpeg']);
             }
         }
         if ($job['status']!=='succeeded') $job['status']=$prediction['status'];
@@ -220,26 +222,25 @@ function startGeneration(array $input, array $device): array {
     $input=resolveGenerationSource($input);
     if (isset($input['retry_offline']) && !is_bool($input['retry_offline'])) fail('Invalid retry option.');
     if ($input['retry_offline'] ?? false) return startRetryGeneration($input,$device);
-    $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model'] ?? ''])->fetch();
-    if (!$file || !supportedGenerationModel($file['target_model'])) fail('Choose a Qwen-edit weight.');
-    $args=generationSettings($input);
+    $file=generationFile($input['model'] ?? '');
+    $args=generationArguments($input,$file);
     $token=readReplicateToken($config['private_session_directory']) ?? '';
     if ($token==='') fail('Configure the Replicate token on the server first.',503);
-    // Check storage before starting a paid job.
+    // Check storage and video inspection before starting a paid job.
+    if (generationFamily($file['target_model'])==='wan') requireVideoTools();
     outputDirectory();
-    $expires=(string)(time()+3600); $sha=$file['sha256'];
     $base=rtrim($config['base_url'],'/').'/api.php?';
-    $args['lora_weights']=$base.http_build_query(['action'=>'weights','sha'=>$sha,'expires'=>$expires,'signature'=>hash_hmac('sha256',$sha.':'.$expires,$token)]);
     $id=bin2hex(random_bytes(32)); $callback=bin2hex(random_bytes(32));
     $db->beginTransaction();
     try {
         query('INSERT INTO makelora_generations (id,device_id,model_name,prompt,callback_hash,created_at) VALUES (?,?,?,?,?,UTC_TIMESTAMP())',[$id,$device['id'],$file['display_name'],$input['prompt'],hash('sha256',$callback)]);
+        saveGenerationIdentity($id,$file);
         saveGenerationRecipe($id,$input,$file);
         $db->commit();
     } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack(); throw $error; }
     try {
-        $prediction=provider('models/qwen/qwen-image-edit-plus-lora/predictions',[
-            'input'=>$args,'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$id,'secret'=>$callback]),
+        $prediction=submitModelPrediction($file,$args,[
+            'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$id,'secret'=>$callback]),
             'webhook_events_filter'=>['completed']]);
     } catch (ProviderFailure $error) {
         // A timeout may occur after acceptance; a later authenticated callback can recover it.
@@ -252,7 +253,7 @@ function startGeneration(array $input, array $device): array {
 }
 function galleryPage(string $before=''): array {
     if ($before!=='' && !preg_match('/^[a-f0-9]{64}$/D',$before)) fail('Invalid gallery cursor.');
-    $rows=query("SELECT o.id,g.model_name AS model,COALESCE(g.prompt,'') AS prompt,DATE_FORMAT(o.created_at,'%Y-%m-%dT%H:%i:%sZ') AS date FROM makelora_outputs o JOIN makelora_generations g ON g.id=o.generation_id WHERE o.deleted_at IS NULL AND o.id<? ORDER BY o.id DESC LIMIT 101",[$before==='' ? str_repeat('f',64) : $before])->fetchAll();
+    $rows=query("SELECT o.id,o.media_type AS mediaType,o.mime_type AS mimeType,g.model_name AS model,COALESCE(g.prompt,'') AS prompt,DATE_FORMAT(o.created_at,'%Y-%m-%dT%H:%i:%sZ') AS date FROM makelora_outputs o JOIN makelora_generations g ON g.id=o.generation_id WHERE o.deleted_at IS NULL AND o.id<? ORDER BY o.id DESC LIMIT 101",[$before==='' ? str_repeat('f',64) : $before])->fetchAll();
     $more=count($rows)>100;
     $rows=array_slice($rows,0,100);
     $jobs=[];
@@ -282,10 +283,19 @@ function outputRecord(string $id): array {
 function serveOutput(string $id): never {
     $row=outputRecord($id);
     $path=outputDirectory().'/'.basename($row['storage_key']);
-    if (!is_file($path)) fail('Image unavailable.',404);
-    header('Content-Type: image/jpeg'); header('Content-Length: '.filesize($path));
-    header('Content-Disposition: inline; filename="MakeLORA-'.$row['id'].'.jpg"');
-    readfile($path); exit;
+    if (!is_file($path)) fail('Media unavailable.',404);
+    $size=filesize($path); $range=outputByteRange($_SERVER['HTTP_RANGE'] ?? null,$size);
+    header('Accept-Ranges: bytes'); header('Content-Type: '.($row['mime_type'] ?? 'image/jpeg'));
+    header('Content-Disposition: inline; filename="MakeLORA-'.$row['id'].'.'.(($row['media_type'] ?? 'image')==='video' ? 'mp4':'jpg').'"');
+    if ($range===false) { http_response_code(416);header('Content-Range: bytes */'.$size);header('Content-Length: 0');exit; }
+    [$start,$end]=$range; $remaining=$end-$start+1;
+    if (isset($_SERVER['HTTP_RANGE'])) { http_response_code(206);header("Content-Range: bytes $start-$end/$size"); }
+    header('Content-Length: '.$remaining);
+    if ($_SERVER['REQUEST_METHOD']==='HEAD') exit;
+    $stream=fopen($path,'rb');
+    try { fseek($stream,$start); while ($remaining>0 && !feof($stream)) { $chunk=fread($stream,min(1048576,$remaining)); if ($chunk===false || $chunk==='') break;echo $chunk;$remaining-=strlen($chunk); } }
+    finally { fclose($stream); }
+    exit;
 }
 function removeOutput(string $id): void {
     global $db;
@@ -311,7 +321,12 @@ function generationAPI(string $action, array $device): void {
             $file['details']=json_encode(json_decode($file['inspection_json'],true)['metadata'] ?? [],JSON_UNESCAPED_SLASHES);
             unset($file['inspection_json']);
             $file['supported']=supportedGenerationModel($file['baseModel']);
+            $file['family']=generationFamily($file['baseModel']);
+            $file['mediaType']=$file['family']==='wan' ? 'video':'image';
+            $file['isBase']=false;
         }
+        unset($file);
+        $files[]=['id'=>WAN_BASE_ID,'displayName'=>baseWanModel()['display_name'],'baseModel'=>baseWanModel()['target_model'],'sizeBytes'=>0,'details'=>'Base Wan model, without custom LoRA weights.','supported'=>true,'family'=>'wan','mediaType'=>'video','isBase'=>true];
         jsonResponse(['models'=>$files]);
     }
     if ($action==='cancel_retries' && $method==='POST') {
@@ -326,7 +341,7 @@ function generationAPI(string $action, array $device): void {
         header('Content-Type: image/jpeg');header('Content-Length: '.strlen($bytes));echo $bytes;exit;
     }
     if ($action==='gallery' && $method==='GET') jsonResponse(galleryPage($_GET['before'] ?? ''));
-    if ($action==='output' && $method==='GET') serveOutput($_GET['id'] ?? '');
+    if ($action==='output' && in_array($method,['GET','HEAD'],true)) serveOutput($_GET['id'] ?? '');
     if ($action==='remove_output' && $method==='POST') {
         removeOutput($_GET['id'] ?? ''); jsonResponse(['status'=>'removed']);
     }

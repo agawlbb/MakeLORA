@@ -12,6 +12,7 @@ function query(string $sql,array $params=[]): PDOStatement {
 function fail(string $message,int $code=400): never { throw new RuntimeException($message); }
 function check(bool $condition,string $message): void { if (!$condition) throw new RuntimeException($message); }
 $db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',file_get_contents(dirname(__DIR__).'/migrations/008_generation_recipes.sql')));
+$db->exec(file_get_contents(dirname(__DIR__).'/migrations/009_video_generation.sql'));
 require dirname(__DIR__).'/src/generation.php';
 $root=sys_get_temp_dir().'/makelora-retry-sql-'.bin2hex(random_bytes(8));mkdir($root,0700);
 $config=['private_session_directory'=>$root,'base_url'=>'https://fixture.invalid'];

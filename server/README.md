@@ -136,7 +136,8 @@ For an existing installation, apply `migrations/004_generations.sql` if generati
 has never been installed, then `migrations/005_server_gallery.sql` and
 `migrations/006_generation_recovery.sql` and
 `migrations/007_generation_retries.sql` and
-`migrations/008_generation_recipes.sql` before deploying.
+`migrations/008_generation_recipes.sql` and
+`migrations/009_video_generation.sql` before deploying.
 New installations use the updated `schema.sql` instead of replaying migrations.
 Migration 005 preserves older prediction IDs. PHP requires cURL and outbound
 HTTPS access to `api.replicate.com` and `*.replicate.delivery`. The existing saved
@@ -332,3 +333,58 @@ tables only; it never applies production migrations. Set `MAKELORA_TEST_CONFIG`
 to another existing VM `.test-config` PHP file when needed (for example the
 shared `lensswap.php` test configuration); the schema checks reject database
 names that do not contain `test`.
+
+
+## Wan 2.1 image-to-video
+
+Deploy migration **009_video_generation.sql** before this server version, and
+release the app only after the server is updated. New installations use
+`schema.sql`. Migration 009 is idempotent and defaults old jobs/outputs to
+Qwen/JPEG. No production deployment is performed by development or tests.
+
+The adapter uses `wavespeedai/wan-2.1-i2v-480p`, pinned to version
+`f6644fcfc305f4f9e29e789f01f62dfa43d1775c22db64705a05d6bf85957366`.
+`src/contracts/wan-2.1-i2v-480p.json` records the verified input constraints and
+URI output shape from the versioned Replicate documentation. This version has
+no frame-count, FPS or duration inputs. Its ratios are `16:9`/`9:16` and its
+acceleration modes are `Off`/`Balanced`/`Fast`.
+
+The model catalog includes a base Wan entry without uploaded weights. Custom
+Wan LoRAs must declare target model `Wan-AI/Wan2.1-I2V-14B-480P` when imported
+with the existing importer. 720p, T2V and Wan 2.2 weights are not accepted for
+this endpoint. Signed weight delivery and device access requirements are
+unchanged. Base generation omits LoRA weights/strength entirely.
+
+**Runtime prerequisite:** install FFmpeg's `ffprobe` executable on the PHP server
+(default `/usr/bin/ffprobe`) and permit PHP `proc_open`. A nonstandard executable
+can be configured with `ffprobe_binary` in private settings. This is checked
+before accepting a paid Wan submission. The request archives at most 250 MB per
+video, validates the MP4 container/video stream using a bounded local ffprobe
+process, and streams authenticated downloads with single-byte-range and HEAD
+support. Qwen retains its 50 MB JPEG limit. Review the HTTP/PHP request timeout
+budget to permit video archival (the provider download timeout is 180 seconds).
+
+Gallery responses add `mediaType` and `mimeType`. Catalog responses add `family`,
+`mediaType` and `isBase`. These fields are additive; update clients alongside the
+server because older galleries cannot display video. Video outputs remain
+private in the existing output directory. Original images, saved Wan parameters,
+provider identity/version, retry scheduling and callback deletion tombstones
+use the same retention rules as Qwen. No training videos are uploaded from
+local dataset projects by this feature.
+
+Additional development checks (no paid requests):
+
+```sh
+php -n server/tests/wan_generation.php
+php -n server/tests/wan_retries.php
+python3 -m unittest discover -s server/tests -p 'test_*.py'
+```
+
+Set `MAKELORA_TEST_FFPROBE` to a development-only ffprobe path if it is not
+installed at `/usr/bin/ffprobe`. `tests/fixtures/wan-output.mp4` is a synthetic
+32 × 32 blue clip created solely for archival validation. Existing schema tests
+cover the migration and Wan replay using connection-local temporary tables and
+VM `.test-config` credentials only. Swift core tests cover old project loading,
+video references/trims and flat filenames; iOS tests cover conversion, source
+orientation, variable timestamps, cancellation and generation requests. Run iOS
+tests on macOS with the existing validation workflow; Linux has no Apple SDK.

@@ -20,19 +20,23 @@ struct DatasetView: View {
     @State private var serverSettings = false
     @State private var newProject = false
     @State private var projectName = ""
+    @State private var datasetModel = DatasetModel.qwenImageEdit2509
     var body: some View {
         Group {
-            if let project = store.project { WorkspaceView(projectID: project.id).id(project.id) }
+            if let project = store.project {
+                if project.model == .wan21I2V14B { VideoWorkspaceView(projectID: project.id).id(project.id) }
+                else { WorkspaceView(projectID: project.id).id(project.id) }
+            }
             else {
                 NavigationStack {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("A starting point.\nA different possibility.").font(.system(size: 42, weight: .semibold, design: .rounded))
-                                Text("Build paired-image datasets, one transformation at a time.").foregroundStyle(.secondary)
+                                Text("Prepare image and video datasets for your model.").foregroundStyle(.secondary)
                             }.padding(.vertical, 20)
                             if store.projects.isEmpty {
-                                ContentUnavailableView("Your first dataset starts here", systemImage: "rectangle.stack.badge.plus", description: Text("Create a project, import photos, then pair a control image with a target."))
+                                ContentUnavailableView("Your first dataset starts here", systemImage: "rectangle.stack.badge.plus", description: Text("Choose a training model, then import images or videos."))
                             }
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 240))], spacing: 18) {
                                 ForEach(store.projects) { summary in
@@ -40,7 +44,7 @@ struct DatasetView: View {
                                         VStack(alignment: .leading, spacing: 24) {
                                             Image(systemName: "square.stack.3d.up").font(.largeTitle).foregroundStyle(accent)
                                             Text(summary.name).font(.title2.bold()).lineLimit(2)
-                                            Text("\(summary.count) pairs · On this device").font(.subheadline).foregroundStyle(.secondary)
+                                            Text("\(summary.count) \(summary.model == .wan21I2V14B ? "clips" : "pairs") · \(summary.model.title)").font(.subheadline).foregroundStyle(.secondary)
                                         }.frame(maxWidth: .infinity, minHeight: 160, alignment: .leading).padding(24)
                                         .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 20))
                                     }.buttonStyle(.plain)
@@ -56,11 +60,23 @@ struct DatasetView: View {
         .tint(accent)
         .sheet(isPresented: $serverSettings) { ServerView() }
         .disabled(store.busy)
-        .overlay { if store.busy { ProgressView(store.status).padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) } }
-        .alert("New project", isPresented: $newProject) {
-            TextField("Project name", text: $projectName)
-            Button("Create") { store.create(name: projectName) }.disabled(projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Cancel", role: .cancel) { }
+        .overlay { if store.busy {
+            VStack(spacing: 12) { ProgressView(store.status); if store.progress > 0 { ProgressView(value: store.progress) }; Button("Cancel") { store.cancelWork() } }
+                .padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        } }
+        .sheet(isPresented: $newProject) {
+            NavigationStack {
+                Form {
+                    TextField("Project name", text: $projectName)
+                    Picker("Training model", selection: $datasetModel) { ForEach(DatasetModel.allCases, id: \.self) { Text($0.title).tag($0) } }
+                    Text(datasetModel == .wan21I2V14B ? "Import videos, trim and caption. Export matching MP4 and TXT files at 480p." : "Pair control and target images, crop and caption.").foregroundStyle(.secondary)
+                }
+                .navigationTitle("New project")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { newProject = false } }
+                    ToolbarItem(placement: .confirmationAction) { Button("Create") { store.create(name: projectName, model: datasetModel); newProject = false }.disabled(projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+                }
+            }
         }
         .alert("MakeLORA needs attention", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) {
             Button("OK") { store.error = nil }
@@ -132,8 +148,9 @@ struct WorkspaceView: View {
             Task {
                 do {
                     let urls = try result.get()
-                    store.setImporting(true)
+                    store.beginImport()
                     for url in urls {
+                        if store.cancelRequested { break }
                         let granted = url.startAccessingSecurityScopedResource()
                         defer { if granted { url.stopAccessingSecurityScopedResource() } }
                         do {
@@ -149,8 +166,9 @@ struct WorkspaceView: View {
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
-                store.setImporting(true)
+                store.beginImport()
                 for (index, item) in items.enumerated() {
+                    if store.cancelRequested { break }
                     do {
                         guard let data = try await item.loadTransferable(type: Data.self) else { throw ProjectError.invalid("Photos did not supply image data. Download the original from iCloud and import again.") }
                         let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "image"

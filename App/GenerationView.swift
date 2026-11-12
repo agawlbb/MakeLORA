@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import ImageIO
+import AVKit
 
 struct GenerationView: View {
     @EnvironmentObject private var store: GenerationStore
@@ -13,9 +14,9 @@ struct GenerationView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Custom LoRA weights") {
+                Section("Models and custom LoRA weights") {
                     if pairing.credential == nil {
-                        ContentUnavailableView("Connect a server", systemImage: "server.rack", description: Text("Pair your server to browse its custom LoRA weights and generate images."))
+                        ContentUnavailableView("Connect a server", systemImage: "server.rack", description: Text("Pair your server to browse its custom LoRA weights and generate images and videos."))
                         Button("Connect server") { serverSettings = true }
                     } else if store.models.isEmpty {
                         Text("No weights loaded. Pull to refresh or add weights on your server.").foregroundStyle(.secondary)
@@ -30,7 +31,7 @@ struct GenerationView: View {
                     }
                 }
                 Section("Output gallery · \(store.outputs.count + store.galleryJobs.count)") {
-                    if store.outputs.isEmpty && store.galleryJobs.isEmpty { Text("Images are stored on your server and shared with all paired devices.").foregroundStyle(.secondary) }
+                    if store.outputs.isEmpty && store.galleryJobs.isEmpty { Text("Images and videos are stored on your server and shared with all paired devices.").foregroundStyle(.secondary) }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 12) {
                         ForEach(store.galleryJobs) { job in
                             GenerationProgressTile(job: job)
@@ -38,10 +39,13 @@ struct GenerationView: View {
                         ForEach(store.outputs) { output in
                             Button { selectedOutput = output } label: {
                                 VStack(alignment: .leading) {
-                                    ServerGenerationImage(output: output).frame(height: 150).clipped()
+                                    Group {
+                                        if output.isVideo { ServerVideoPoster(output: output) }
+                                        else { ServerGenerationImage(output: output) }
+                                    }.frame(height: 150).clipped()
                                     Text(output.model).font(.caption).lineLimit(1)
                                 }
-                            }.buttonStyle(.plain).accessibilityLabel("View generated image, \(output.model)")
+                            }.buttonStyle(.plain).accessibilityLabel("View generated media, \(output.model)")
                         }
                     }
                 }
@@ -154,6 +158,7 @@ struct GenerationComposer: View {
     init(model: GenerationModel) {
         initialModel = model; draft = nil
         _modelID = State(initialValue: model.id)
+        _ratio = State(initialValue: model.isVideo ? "16:9" : "match_input_image")
     }
     init(draft: GenerationDraft, models: [GenerationModel]) {
         self.draft = draft
@@ -168,6 +173,7 @@ struct GenerationComposer: View {
         _seed = State(initialValue: settings.seed.map(String.init) ?? "")
         _retryOffline = State(initialValue: settings.retryOffline ?? true)
         _sourceOutputID = State(initialValue: draft.details.hasInput ? draft.output.id : nil)
+        _wan = State(initialValue: WanGenerationOptions(negativePrompt: settings.negativePrompt ?? "", fastMode: settings.fastMode ?? "Balanced", guidance: settings.guidanceScale ?? 5, steps: settings.inferenceSteps ?? 30, shift: settings.flowShift ?? 3, disableSafetyChecker: settings.disableSafetyChecker ?? false))
     }
     private var model: GenerationModel? { store.models.first { $0.id == modelID } ?? (draft == nil && initialModel?.id == modelID ? initialModel : nil) }
     @EnvironmentObject private var store: GenerationStore
@@ -180,6 +186,7 @@ struct GenerationComposer: View {
     @State private var prompt = ""
     @State private var ratio = "match_input_image"
     @State private var scale = 1.0
+    @State private var wan = WanGenerationOptions()
     @State private var seed = ""
     @State private var retryOffline = true
     @State private var files = false
@@ -202,9 +209,9 @@ struct GenerationComposer: View {
                     if let model {
                         Text(model.displayName).font(.headline)
                         LabeledContent("Base model", value: model.baseModel ?? "Unspecified")
-                        LabeledContent("Weight size", value: ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file))
+                        if model.isBase != true { LabeledContent("Weight size", value: ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file)) }
                         DisclosureGroup("Additional information") { Text(model.details).font(.caption.monospaced()).textSelection(.enabled) }
-                        if !model.supported { Text("Generation currently supports Qwen Image Edit 2509 weights. Set the correct base model on the server.").foregroundStyle(.secondary) }
+                        if !model.supported { Text("Choose compatible Qwen Image Edit 2509 or Wan 2.1 I2V 14B 480p weights. Set the correct base model on the server.").foregroundStyle(.secondary) }
                         if !useModel { Button("Use model to generate") { useModel = true }.disabled(!model.supported) }
                     }
                     if draft?.details.legacy == true {
@@ -223,23 +230,34 @@ struct GenerationComposer: View {
                     Section("Prompt") { TextEditor(text: $prompt).frame(minHeight: 100).accessibilityLabel("Editing prompt") }
                     Section("Settings") {
                         Picker("Aspect ratio", selection: $ratio) {
-                            Text("Match input image").tag("match_input_image")
-                            ForEach(["1:1", "16:9", "9:16", "4:3", "3:4"], id: \.self) { Text($0).tag($0) }
+                            if model?.isVideo != true { Text("Match input image").tag("match_input_image") }
+                            ForEach(model?.isVideo == true ? ["16:9", "9:16"] : ["1:1", "16:9", "9:16", "4:3", "3:4"], id: \.self) { Text($0).tag($0) }
                         }
-                        VStack(alignment: .leading) { Text("LoRA scale: \(scale, specifier: "%.2f")"); Slider(value: $scale, in: 0...4, step: 0.05) }
+                        if model?.isBase != true {
+                            VStack(alignment: .leading) { Text("LoRA scale: \(scale, specifier: "%.2f")"); Slider(value: $scale, in: 0...4, step: 0.05) }
+                        }
                         TextField("Seed (blank for random)", text: $seed).keyboardType(.numberPad)
-                        LabeledContent("Output format", value: "JPG")
-                        LabeledContent("Disable safety checker", value: "True")
+                        LabeledContent("Output format", value: model?.isVideo == true ? "MP4 · 480p" : "JPG")
+                        if model?.isVideo == true {
+                            DisclosureGroup("Advanced video settings") {
+                                TextField("Negative prompt", text: $wan.negativePrompt, axis: .vertical)
+                                Picker("Acceleration", selection: $wan.fastMode) { ForEach(["Off", "Balanced", "Fast"], id: \.self) { Text($0).tag($0) } }
+                                VStack(alignment: .leading) { Text("Guidance: \(wan.guidance, specifier: "%.1f")"); Slider(value: $wan.guidance, in: 1...10, step: 0.1) }
+                                Stepper("Inference steps: \(wan.steps)", value: $wan.steps, in: 1...40)
+                                Stepper("Flow shift: \(wan.shift)", value: $wan.shift, in: 0...10)
+                                Toggle("Disable safety checker", isOn: $wan.disableSafetyChecker)
+                            }
+                        } else { LabeledContent("Disable safety checker", value: "True") }
                         Toggle("Retry temporary failures", isOn: $retryOffline)
                         if retryOffline {
                             Text("Every 30 minutes for up to 12 hours, even while the app is closed. The server keeps the original photo while generated outputs remain. Failed requests without outputs are cleaned up after the retry window.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    Button("Generate image", systemImage: "sparkles") {
+                    Button(model?.isVideo == true ? "Generate video" : "Generate image", systemImage: "sparkles") {
                         guard let credential = pairing.credential, let image, let model, model.supported else { return }
                         Task {
-                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID)
+                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID, wan: wan)
                             switch result {
                             case .submitted: dismiss()
                             case .sourceUnavailable:
@@ -253,8 +271,12 @@ struct GenerationComposer: View {
                     }.disabled(image == nil || importing || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy || pairing.credential == nil || model?.supported != true)
                 }
             }
-            .navigationTitle(useModel ? "Generate image" : "Model details")
+            .navigationTitle(useModel ? (model?.isVideo == true ? "Generate video" : "Generate image") : "Model details")
             .toolbar { Button("Done") { dismiss() } }
+        }
+        .onChange(of: modelID) { _, _ in
+            ratio = model?.isVideo == true ? "16:9" : "match_input_image"
+            wan = WanGenerationOptions()
         }
         .task(id: draft?.id) {
             guard let draft, draft.details.hasInput else { return }
@@ -320,9 +342,19 @@ struct GenerationDetail: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                GalleryPager(outputs: store.outputs, selectedID: $selectedID, zoomed: $zoomed)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black)
+                if store.outputs.contains(where: \.isVideo) {
+                    TabView(selection: $selectedID) {
+                        ForEach(store.outputs) { item in
+                            Group {
+                                if item.isVideo { ServerVideoPlayer(output: item, active: item.id == selectedID) }
+                                else { SingleGalleryImage(output: item) }
+                            }.tag(item.id)
+                        }
+                    }.tabViewStyle(.page(indexDisplayMode: .never)).background(Color.black)
+                } else {
+                    GalleryPager(outputs: store.outputs, selectedID: $selectedID, zoomed: $zoomed)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black)
+                }
                 if let current {
                     VStack(spacing: 8) {
                         Text(current.model).font(.headline).lineLimit(1)
@@ -366,12 +398,12 @@ struct GenerationDetail: View {
         }
         .onChange(of: pairing.credential?.deviceID) { _, _ in dismiss() }
         .onDisappear { if share == nil { shareTask?.cancel(); cleanupShare() } }
-        .alert("Image unavailable", isPresented: Binding(get: { detailError != nil }, set: { if !$0 { detailError = nil } })) {
+        .alert("Media unavailable", isPresented: Binding(get: { detailError != nil }, set: { if !$0 { detailError = nil } })) {
             Button("OK") { detailError = nil }
         } message: { Text(detailError ?? "") }
-        .confirmationDialog("Remove this image from the server gallery for all devices?", isPresented: $remove, titleVisibility: .visible) {
+        .confirmationDialog("Remove this output from the server gallery for all devices?", isPresented: $remove, titleVisibility: .visible) {
             if let removalTarget {
-                Button("Remove image", role: .destructive) {
+                Button("Remove output", role: .destructive) {
                     Task { if !(await store.remove(removalTarget)) { detailError = store.error; store.error = nil } }
                 }
             }
@@ -418,6 +450,16 @@ private struct GenerationSettingsView: View {
                     if let seed = details.resolvedSeed { LabeledContent("Resolved seed", value: String(seed)) }
                     LabeledContent("Output format", value: settings.outputFormat?.uppercased() ?? "Unavailable")
                     LabeledContent("Disable safety checker", value: settings.disableSafetyChecker == true ? "True" : "False")
+                    if let mode = settings.fastMode {
+                        Section("Video settings") {
+                            LabeledContent("Acceleration", value: mode)
+                            LabeledContent("Guidance", value: settings.guidanceScale.map { String($0) } ?? "Unavailable")
+                            LabeledContent("Inference steps", value: settings.inferenceSteps.map(String.init) ?? "Unavailable")
+                            LabeledContent("Flow shift", value: settings.flowShift.map(String.init) ?? "Unavailable")
+                            Text("Negative prompt: " + (settings.negativePrompt ?? ""))
+                            if let version = settings.providerVersion { LabeledContent("Provider version", value: version).textSelection(.enabled) }
+                        }
+                    }
                     LabeledContent("Retry temporary failures", value: settings.retryOffline == true ? "On" : "Off")
                     if !details.hasInput { Text("The original photo is no longer available. Choose a photo when running again.").foregroundStyle(.secondary) }
                 }

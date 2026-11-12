@@ -13,6 +13,7 @@ public enum DatasetZIP {
         struct Entry { let name: Data; let crc: UInt32; let size: UInt32; let offset: UInt32 }
         var entries: [Entry] = []
         for file in files {
+            try Task.checkCancellation()
             let name = Data(file.name.utf8)
             guard name.count <= Int(UInt16.max), !file.name.hasPrefix("/"), !file.name.split(separator: "/").contains("..") else { throw ProjectError.invalid("Invalid export filename.") }
             let input = try FileHandle(forReadingFrom: file.url)
@@ -25,6 +26,7 @@ public enum DatasetZIP {
             var crc: UInt32 = 0xffffffff
             var size: UInt64 = 0
             while let bytes = try input.read(upToCount: 1_048_576), !bytes.isEmpty {
+                try Task.checkCancellation()
                 size += UInt64(bytes.count)
                 guard size < UInt64(UInt32.max) else { throw tooLarge }
                 for byte in bytes { crc = table[Int((crc ^ UInt32(byte)) & 255)] ^ (crc >> 8) }

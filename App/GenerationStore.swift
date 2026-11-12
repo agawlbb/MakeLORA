@@ -8,12 +8,19 @@ struct GenerationModel: Decodable, Identifiable {
     let sizeBytes: Int64
     let details: String
     let supported: Bool
+    var family: String? = nil
+    var mediaType: String? = nil
+    var isBase: Bool? = nil
+    var isVideo: Bool { family == "wan" || mediaType == "video" }
 }
 struct GenerationOutput: Decodable, Identifiable {
     let id: String
     let model: String
     let prompt: String
     let date: Date
+    var mediaType: String? = nil
+    var mimeType: String? = nil
+    var isVideo: Bool { mediaType == "video" }
 }
 struct GenerationSettings: Decodable {
     let modelID: String?
@@ -26,6 +33,12 @@ struct GenerationSettings: Decodable {
     let outputFormat: String?
     let disableSafetyChecker: Bool?
     let retryOffline: Bool?
+    var negativePrompt: String? = nil
+    var fastMode: String? = nil
+    var guidanceScale: Double? = nil
+    var inferenceSteps: Int? = nil
+    var flowShift: Int? = nil
+    var providerVersion: String? = nil
 }
 struct GenerationDetails: Decodable {
     let legacy: Bool
@@ -72,6 +85,14 @@ private struct GenerationServiceError: Decodable, LocalizedError {
     let jobID: String?
     let jobStatus: String?
     var errorDescription: String? { error }
+}
+struct WanGenerationOptions {
+    var negativePrompt = ""
+    var fastMode = "Balanced"
+    var guidance = 5.0
+    var steps = 30
+    var shift = 3
+    var disableSafetyChecker = false
 }
 @MainActor final class GenerationStore: ObservableObject {
     @Published var models: [GenerationModel] = []
@@ -199,10 +220,30 @@ private struct GenerationServiceError: Decodable, LocalizedError {
     }
     func prepareShare(_ output: GenerationOutput) async throws -> URL {
         // A temporary original exists only during the user-requested share sheet.
+        if output.isVideo { return try await videoFile(output) }
         let data = try await imageData(output)
         try Task.checkCancellation()
         let url = shareDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
         try data.write(to: url, options: [.atomic, .completeFileProtection])
+        return url
+    }
+    func videoFile(_ output: GenerationOutput) async throws -> URL {
+        guard let credential = activeCredential else { throw URLError(.userAuthenticationRequired) }
+        var parts = URLComponents(url: credential.server.appendingPathComponent("api.php"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "action", value: "output"), URLQueryItem(name: "id", value: output.id)]
+        var request = URLRequest(url: parts.url!, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.timeoutInterval = 180
+        request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
+        let (temporary, response) = try await session.download(for: request)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try Task.checkCancellation()
+        guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { throw URLError(.cancelled) }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200, http.mimeType == "video/mp4" else { throw URLError(.badServerResponse) }
+        let count = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard count > 0, count <= 250_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
+        let url = shareDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        try FileManager.default.moveItem(at: temporary, to: url)
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
         return url
     }
     @discardableResult func refreshGallery() async -> Bool {
@@ -264,7 +305,7 @@ private struct GenerationServiceError: Decodable, LocalizedError {
             await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
-    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil) async -> GenerationSubmissionOutcome {
+    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil, wan: WanGenerationOptions = WanGenerationOptions()) async -> GenerationSubmissionOutcome {
         guard !busy else { return .failed }
         activeCredential = credential
         busy = true; error = nil
@@ -272,6 +313,11 @@ private struct GenerationServiceError: Decodable, LocalizedError {
         defer { busy = false }
         do {
             var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale, "retry_offline": retryOffline]
+            if model.isVideo {
+                body["negative_prompt"] = wan.negativePrompt; body["fast_mode"] = wan.fastMode
+                body["sample_guide_scale"] = wan.guidance; body["sample_steps"] = wan.steps; body["sample_shift"] = wan.shift
+                body["disable_safety_checker"] = wan.disableSafetyChecker
+            }
             if let sourceOutputID { body.removeValue(forKey: "image"); body["source_output_id"] = sourceOutputID }
             if !seed.isEmpty {
                 guard let value = Int(seed), (0...2147483647).contains(value) else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Seed must be a whole number from 0 to 2147483647."]) }

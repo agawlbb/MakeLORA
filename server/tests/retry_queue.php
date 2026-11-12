@@ -56,11 +56,11 @@ function query(string $sql,array $params=[]): object {
         foreach ($attempts as $attempt) if ($attempt['generation_id']===$params[0] && (count($params)===1 || $attempt['provider_id']===$params[1])) $rows[]=$attempt;
         usort($rows,static fn($a,$b)=>$b['attempt_no']<=>$a['attempt_no']);
     } elseif (str_starts_with($sql,'SELECT status FROM makelora_devices')) $rows=[['status'=>$deviceActive ? 'active':'revoked']];
-    elseif (str_starts_with($sql,'SELECT * FROM makelora_files')) $rows=[['sha256'=>str_repeat('a',64),'display_name'=>'Fixture','target_model'=>'Qwen/Qwen-Image-Edit-2509']];
+    elseif (str_starts_with($sql,'SELECT * FROM makelora_files')) $rows=[['sha256'=>str_repeat('a',64),'display_name'=>'Fixture','target_model'=>$GLOBALS['fixtureBaseModel'] ?? 'Qwen/Qwen-Image-Edit-2509']];
     elseif (str_starts_with($sql,'SELECT id FROM makelora_outputs')) {
         $rows=array_values(array_filter($images,static fn($image)=>$image['generation_id']===$params[0] && (str_contains($sql,'deleted_at IS NULL') ? ($image['deleted_at'] ?? null)===null:$image['output_index']===$params[1])));
     } elseif (str_starts_with($sql,'INSERT INTO makelora_outputs')) {
-        [$id,$job,$index,$key]=$params;$images[$id]=['id'=>$id,'generation_id'=>$job,'output_index'=>$index,'storage_key'=>$key];
+        [$id,$job,$index,$key,$media,$mime]=$params;$images[$id]=['id'=>$id,'generation_id'=>$job,'output_index'=>$index,'storage_key'=>$key,'media_type'=>$media,'mime_type'=>$mime];
     } else throw new RuntimeException('Unexpected SQL: '.$sql);
     return new class($rows,$affected) {
         public function __construct(private array $rows,private int $affected) {}
@@ -78,7 +78,7 @@ function curl_close(object $curl): void {}
 function curl_exec(object $curl): string|bool {
     global $creates,$createCode,$createState,$predictions,$history,$historyCode,$badDownload,$createHook;
     if (isset($curl->options[CURLOPT_WRITEFUNCTION])) {
-        $bytes=$badDownload ? 'broken':hex2bin('ffd8ffc00011080001000103011100021100031100ffd9');
+        $bytes=$badDownload ? 'broken':($GLOBALS['downloadBytes'] ?? hex2bin('ffd8ffc00011080001000103011100021100031100ffd9'));
         $curl->options[CURLOPT_WRITEFUNCTION]($curl,$bytes);return true;
     }
     if (isset($curl->options[CURLOPT_POST])) {
@@ -87,7 +87,7 @@ function curl_exec(object $curl): string|bool {
         if ($createHook) { $hook=$createHook;$createHook=null;$hook($body); }
         if ($createCode>=300) return '{"detail":"simulated outage"}';
         $id='provider-'.count($creates);
-        return json_encode($predictions[$id]=['id'=>$id,'model'=>'qwen/qwen-image-edit-plus-lora','source'=>'api','webhook'=>$body['webhook'],'created_at'=>gmdate('c'),'status'=>$createState,'logs'=>'Working','output'=>$createState==='succeeded' ? ['https://replicate.delivery/result.jpg']:null]);
+        return json_encode($predictions[$id]=['id'=>$id,'model'=>isset($body['version']) ? wanContract()['model']:QWEN_PROVIDER,'version'=>$body['version'] ?? null,'source'=>'api','webhook'=>$body['webhook'],'created_at'=>gmdate('c'),'status'=>$createState,'logs'=>'Working','output'=>$createState==='succeeded' ? ['https://replicate.delivery/result.jpg']:null]);
     }
     $path=parse_url($curl->url,PHP_URL_PATH);
     if ($path==='/v1/predictions') {
@@ -155,7 +155,7 @@ try {
     check(retryJob($id)['status']==='retry_canceled' && retryJob($id)['retry_payload_key']===null,'Cancellation survives restarts and deletes input');
     runGenerationRetryWorker();check(count($creates)===1,'Canceled retry never submits');
     parse_str(parse_url($first['webhook'],PHP_URL_QUERY),$callback);$_GET=$callback;
-    $predictions['late-accepted']=['id'=>'late-accepted','model'=>'qwen/qwen-image-edit-plus-lora','source'=>'api','status'=>'succeeded','webhook'=>$first['webhook'],'created_at'=>gmdate('c'),'output'=>['https://replicate.delivery/late.jpg']];
+    $predictions['late-accepted']=['id'=>'late-accepted','model'=>isset($body['version']) ? wanContract()['model']:QWEN_PROVIDER,'version'=>$body['version'] ?? null,'source'=>'api','status'=>'succeeded','webhook'=>$first['webhook'],'created_at'=>gmdate('c'),'output'=>['https://replicate.delivery/late.jpg']];
     try { retryGenerationWebhook(['id'=>'late-accepted']); } catch (Reply $reply) { check($reply->status===200,'Late callback acknowledged'); }
     check(count($images)===1 && retryJob($id)['status']==='succeeded','Stopping retries preserves an already accepted output');
 
@@ -169,13 +169,13 @@ try {
     check(count($creates)===1 && retryJob($id)['status']==='retry_paused','History outage never blindly creates another paid prediction');
 
     resetQueueFixture();$id=newQueuedJob();
-    $unknown=['id'=>'unknown','model'=>'qwen/qwen-image-edit-plus-lora','source'=>'api','status'=>'starting','created_at'=>gmdate('c'),'webhook'=>null];
+    $unknown=['id'=>'unknown','model'=>isset($body['version']) ? wanContract()['model']:QWEN_PROVIDER,'version'=>$body['version'] ?? null,'source'=>'api','status'=>'starting','created_at'=>gmdate('c'),'webhook'=>null];
     $history=['results'=>[$unknown],'next'=>null];$predictions['unknown']=$unknown;
     forceDue($id);runGenerationRetryWorker();
     check(count($creates)===1 && retryJob($id)['status']==='retry_paused','Unidentifiable recent run pauses retries');
 
     resetQueueFixture();$id=newQueuedJob();
-    $recovered=['id'=>'recovered','model'=>'qwen/qwen-image-edit-plus-lora','source'=>'api','status'=>'starting','created_at'=>gmdate('c'),'webhook'=>$creates[0]['webhook'],'logs'=>'Recovered'];
+    $recovered=['id'=>'recovered','model'=>isset($body['version']) ? wanContract()['model']:QWEN_PROVIDER,'version'=>$body['version'] ?? null,'source'=>'api','status'=>'starting','created_at'=>gmdate('c'),'webhook'=>$creates[0]['webhook'],'logs'=>'Recovered'];
     $history=['results'=>[$recovered],'next'=>null];$predictions['recovered']=$recovered;
     forceDue($id);runGenerationRetryWorker();
     check(count($creates)===1 && retryJob($id)['provider_id']==='recovered','Lost create response reconciled without a duplicate POST');
@@ -196,7 +196,7 @@ try {
     $createHook=static function(array $body): void {
         global $predictions;
         parse_str(parse_url($body['webhook'],PHP_URL_QUERY),$query);$_GET=$query;
-        $predictions['callback-won']=['id'=>'callback-won','model'=>'qwen/qwen-image-edit-plus-lora','source'=>'api','status'=>'succeeded','webhook'=>$body['webhook'],'created_at'=>gmdate('c'),'output'=>['https://replicate.delivery/race.jpg']];
+        $predictions['callback-won']=['id'=>'callback-won','model'=>isset($body['version']) ? wanContract()['model']:QWEN_PROVIDER,'version'=>$body['version'] ?? null,'source'=>'api','status'=>'succeeded','webhook'=>$body['webhook'],'created_at'=>gmdate('c'),'output'=>['https://replicate.delivery/race.jpg']];
         try { retryGenerationWebhook(['id'=>'callback-won']); } catch (Reply $reply) { check($reply->status===200,'Race callback accepted'); }
     };
     $reply=startGeneration($input,$device);

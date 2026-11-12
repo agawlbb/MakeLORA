@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS makelora_files (
 CREATE TABLE IF NOT EXISTS makelora_generations (
  id VARCHAR(100) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
  device_id CHAR(32) NOT NULL,
+ model_family VARCHAR(16) NOT NULL DEFAULT 'qwen',
+ provider_model VARCHAR(120) NOT NULL DEFAULT 'qwen/qwen-image-edit-plus-lora',
+ provider_version CHAR(64) NULL,
  provider_id VARCHAR(100) NULL,
  model_name VARCHAR(255) NOT NULL DEFAULT '',
  prompt TEXT NULL,
@@ -51,6 +54,8 @@ CREATE TABLE IF NOT EXISTS makelora_outputs (
  id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
  generation_id VARCHAR(100) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
  output_index INT UNSIGNED NOT NULL,
+ media_type VARCHAR(16) NOT NULL DEFAULT 'image',
+ mime_type VARCHAR(40) NOT NULL DEFAULT 'image/jpeg',
  storage_key VARCHAR(80) NOT NULL,
  created_at DATETIME NOT NULL,
  deleted_at DATETIME NULL,

@@ -12,11 +12,14 @@ function recipeInputPath(string $key): string {
     return recipeDirectory().'/'.$key;
 }
 function saveGenerationRecipe(string $id,array $input,array $file): void {
-    $args=generationSettings($input);
+    $family=generationFamily($file['target_model']);
+    $args=generationSettings($input,$family);
     $settings=['modelID'=>$file['sha256'],'modelName'=>$file['display_name'],'baseModel'=>$file['target_model'],
         'prompt'=>$args['prompt'],'aspectRatio'=>$args['aspect_ratio'],'loraScale'=>$args['lora_scale'],
-        'seed'=>$args['seed'] ?? null,'outputFormat'=>'jpg','disableSafetyChecker'=>true,'retryOffline'=>$input['retry_offline'] ?? false];
-    $bytes=base64_decode(substr($args['image'][0],strlen('data:image/jpeg;base64,')),true);
+        'seed'=>$args['seed'] ?? null,'outputFormat'=>$family==='wan' ? 'mp4':'jpg','disableSafetyChecker'=>$args['disable_safety_checker'],'retryOffline'=>$input['retry_offline'] ?? false];
+    if ($family==='wan') $settings+=['negativePrompt'=>$args['negative_prompt'],'fastMode'=>$args['fast_mode'],'guidanceScale'=>$args['sample_guide_scale'],'inferenceSteps'=>$args['sample_steps'],'flowShift'=>$args['sample_shift'],'providerVersion'=>wanContract()['version']];
+    $image=$family==='wan' ? $args['image']:$args['image'][0];
+    $bytes=base64_decode(substr($image,strlen('data:image/jpeg;base64,')),true);
     if ($bytes===false || strlen($bytes)>11000000) fail('Invalid original image.',413);
     $key=$id.'.jpg'; $temporary=tempnam(recipeDirectory(),'.input-');
     if ($temporary===false) throw new RuntimeException('Original image storage unavailable.');

@@ -1,6 +1,6 @@
 # MakeLORA
 
-An offline iPhone and iPad app for preparing paired-image datasets for image-editing models. Requires iOS or iPadOS 17 or later. iPhones use portrait orientation; iPads support portrait and landscape. Portrait uses a full-width library and a separate pair editor, with stacked image cards on narrow displays. Landscape iPads use a two-pane workspace with side-by-side image comparisons.
+An iPhone and iPad app for preparing image and video training datasets offline, with optional server-backed generation. Requires iOS or iPadOS 17 or later. iPhones use portrait orientation; iPads support portrait and landscape. Portrait uses a full-width library and a separate pair editor, with stacked image cards on narrow displays. Landscape iPads use a two-pane workspace with side-by-side image comparisons.
 
 Create a project and import photos from Photos or Files, including HEIC, JPEG and PNG. Choose a control (starting image) and a target (desired result), then describe the transformation. Photos can be reused in any number of pairs.
 
@@ -24,6 +24,41 @@ All generated images are JPG, regardless of input format. Captions are UTF-8. Pa
 Projects and originals are stored in the app's Application Support directory and are eligible for normal device backup. Deleting the app or a project removes its local files. Dataset ZIPs are training exports, not editable project backups. Exported datasets contain the image content and captions you selected; review those before sharing.
 
 Imports are processed one at a time. Images above 100 megapixels or 30,000 pixels on either side are rejected to bound memory usage. ZIP exports are limited to less than 4 GB and 65,535 files; split larger datasets into projects.
+
+## Model-specific datasets
+
+New projects choose **Qwen Image Edit 2509** or **Wan 2.1 Image-to-Video 14B**.
+Existing projects remain Qwen projects with the paired-image layout described above.
+Project model types are fixed at creation.
+
+Wan projects import videos from Photos or Files. Select matching UTF-8 `.txt`
+files alongside videos in Files to import captions by filename stem. Edit captions
+in the clip editor. Multiple clips can reuse one original video. Use playback,
+timeline trim handles or precise start/end times to trim; **Crop** adjusts the
+same relative rectangle across every frame. Originals are preserved.
+
+AVFoundation converts clips on the device to H.264 MP4, with orientation applied,
+SDR color, no audio, and source frame timing retained. After cropping, the shorter
+side becomes 480 pixels; the other dimension rounds to an even pixel count
+(for example, 1920 × 1080 becomes 854 × 480). Very narrow crops that would exceed
+8192 pixels on the longer side cannot be encoded; choose a wider crop. There is
+no automatic duration limit. Conversion updates after editing pauses; export waits
+for current files. Cancel stops conversion or import, preserving saved edits.
+
+Wan ZIPs contain only `1.mp4`, `1.txt`, `2.mp4`, `2.txt`, etc., all at the ZIP root.
+IDs remain stable after deletion. No control images are exported. The existing
+4 GB ZIP limit applies to video projects too. Video projects use format version 2,
+which older app versions refuse to open; Qwen projects retain format version 1.
+
+Generation also offers base **Wan 2.1 Image-to-Video 14B** and compatible server
+LoRAs through Replicate's `wavespeedai/wan-2.1-i2v-480p`. Choose an input image,
+motion prompt and landscape/portrait ratio. Advanced controls include negative
+prompt, acceleration, guidance, inference steps, flow shift and safety checking;
+LoRA strength appears for custom weights. Seed and temporary-failure retry
+controls work as before. MP4 outputs appear in the shared server gallery with
+playback, sharing, removal, saved settings and **Run again**. Playback and sharing
+use protected temporary files that are removed afterward; gallery images remain
+in memory. See the server README for the required migration and `ffprobe` setup.
 
 ## Development
 

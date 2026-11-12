@@ -25,6 +25,18 @@ function output(string $job,int $index=0): string {
     return $id;
 }
 try {
+    $wanID=job();
+    $wan=baseWanModel();
+    $wanInput=['model'=>WAN_BASE_ID,'image'=>$input['image'],'prompt'=>'Fly','aspect_ratio'=>'9:16','negative_prompt'=>'blur','sample_steps'=>15,'sample_shift'=>4,'sample_guide_scale'=>6.5,'fast_mode'=>'Off'];
+    saveGenerationIdentity($wanID,$wan);saveGenerationRecipe($wanID,$wanInput,$wan);
+    $saved=query('SELECT * FROM makelora_generations WHERE id=?',[$wanID])->fetch();
+    check($saved['model_family']==='wan' && $saved['provider_version']===wanContract()['version'],'Real SQL retains Wan identity/version');
+    $wanOutput=output($wanID);
+    query('UPDATE makelora_outputs SET media_type=?,mime_type=? WHERE id=?',['video','video/mp4',$wanOutput]);
+    $details=generationDetails($wanOutput);
+    check($details['settings']['modelID']===WAN_BASE_ID && $details['settings']['negativePrompt']==='blur' && $details['settings']['inferenceSteps']===15,'Real SQL retains Wan replay settings');
+    check(galleryPage()['outputs'][0]['mediaType']==='video','Real gallery SQL returns video media type');
+    removeOutput($wanOutput);
     $id=job();saveGenerationRecipe($id,$input,$file);$a=output($id);$b=output($id,1);
     $details=generationDetails($a);
     check(!$details['legacy'] && $details['hasInput'],'New output exposes original/settings');

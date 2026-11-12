@@ -21,6 +21,10 @@ function query(string $sql,array $params=[]): PDOStatement {
 }
 function fail(string $message,int $status=400): never { throw new RuntimeException($message); }
 $db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',file_get_contents(dirname(__DIR__).'/migrations/008_generation_recipes.sql')));
+$db->exec(file_get_contents(dirname(__DIR__).'/migrations/009_video_generation.sql'));
+$db->exec(file_get_contents(dirname(__DIR__).'/migrations/009_video_generation.sql')); // Idempotent upgrade.
+$upgraded=$db->query("SELECT * FROM makelora_generations WHERE id='old-provider-job'")->fetch();
+if ($upgraded['model_family']!=='qwen' || $upgraded['provider_model']!=='qwen/qwen-image-edit-plus-lora') throw new RuntimeException('Legacy model defaults changed.');
 require dirname(__DIR__).'/src/generation.php';
 $page=galleryPage();
 if (count($page['jobs'])!==1 || $page['jobs'][0]['latestStatus']!=='Starting…') throw new RuntimeException('Pending gallery SQL failed.');

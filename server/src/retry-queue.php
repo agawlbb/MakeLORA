@@ -51,7 +51,10 @@ function retryPayloadPath(string $key): string {
 function retrySavePayload(string $id,array $input): string {
     $args=generationSettings($input);
     // Persist only validated original inputs, never provider credentials or expiring URLs.
-    $payload=['model'=>$input['model'],'image'=>$args['image'][0],'prompt'=>$args['prompt'],'aspect_ratio'=>$args['aspect_ratio'],'lora_scale'=>$args['lora_scale']];
+    $payload=$args;
+    $payload['model']=$input['model'];$payload['_family']=$input['_family'] ?? 'qwen';
+    if (is_array($payload['image'])) $payload['image']=$payload['image'][0];
+    unset($payload['lora_weights']);
     if (isset($args['seed'])) $payload['seed']=$args['seed'];
     $temporary=tempnam(retryPayloadDirectory(),'.request-');
     if ($temporary===false) throw new RuntimeException('Retry storage unavailable.');
@@ -99,9 +102,10 @@ function latestRetryAttempt(string $id): array|false {
 }
 function startRetryGeneration(array $input,array $device): array {
     global $config,$db;
-    $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model'] ?? ''])->fetch();
-    if (!$file || !supportedGenerationModel($file['target_model'])) fail('Choose a Qwen-edit weight.');
+    $file=generationFile($input['model'] ?? '');
+    $input['_family']=generationFamily($file['target_model']);
     generationSettings($input);
+    if ($input['_family']==='wan') requireVideoTools();
     if (!readReplicateToken($config['private_session_directory'])) fail('Configure the Replicate token on the server first.',503);
     outputDirectory();
     $id=bin2hex(random_bytes(32)); $now=time();
@@ -110,6 +114,7 @@ function startRetryGeneration(array $input,array $device): array {
     try {
         query("INSERT INTO makelora_generations (id,device_id,model_name,prompt,status,retry_enabled,retry_until,next_retry_at,retry_payload_key,created_at) VALUES (?,?,?,?,'retry_scheduled',1,?,?,?,?)",
             [$id,$device['id'],$file['display_name'],$input['prompt'],retryDate($now+GENERATION_RETRY_WINDOW),retryDate($now),$key,retryDate($now)]);
+        saveGenerationIdentity($id,$file);
         saveGenerationRecipe($id,$input,$file);
         $db->commit();
     } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack(); unlink(retryPayloadPath($key)); throw $error; }
@@ -128,11 +133,11 @@ function submitRetryAttempt(array $job): void {
     $token=readReplicateToken($config['private_session_directory']);
     if (!$token) { retryFinish($job,'failed','Replicate token is missing. Save a server token before submitting again.'); return; }
     $input=json_decode(file_get_contents(retryPayloadPath($job['retry_payload_key'])),true,16,JSON_THROW_ON_ERROR);
-    $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model']])->fetch();
-    if (!$file || !supportedGenerationModel($file['target_model'])) { retryFinish($job,'failed','The selected weight is unavailable or its base model changed. Choose a weight and submit again.'); return; }
-    $args=generationSettings($input);
-    $expires=(string)($now+3600); $sha=$file['sha256']; $base=rtrim($config['base_url'],'/').'/api.php?';
-    $args['lora_weights']=$base.http_build_query(['action'=>'weights','sha'=>$sha,'expires'=>$expires,'signature'=>hash_hmac('sha256',$sha.':'.$expires,$token)]);
+    if (($input['model'] ?? '')===WAN_BASE_ID) $file=baseWanModel();
+    else $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model']])->fetch();
+    if (!$file || generationFamily($file['target_model'])!==($job['model_family'] ?? 'qwen')) { retryFinish($job,'failed','The selected weight is unavailable or its base model changed. Choose a weight and submit again.'); return; }
+    $args=generationArguments($input,$file,$job);
+    $base=rtrim($config['base_url'],'/').'/api.php?';
     $previous=latestRetryAttempt($job['id']);
     $number=$previous ? (int)$previous['attempt_no']+1 : 0;
     if ($number>GENERATION_MAX_RETRIES) { retryFinish($job,'retry_expired','The retry limit was reached. Submit again to start a new request.'); return; }
@@ -143,9 +148,9 @@ function submitRetryAttempt(array $job): void {
     $fresh=retryJob($job['id']);
     if (!empty($fresh['retry_cancelled_at'])) { retryAttemptUpdate($attemptID,['state'=>'canceled']); retryFinish($fresh,'retry_canceled','Automatic retries stopped.'); return; }
     try {
-        $prediction=provider('models/qwen/qwen-image-edit-plus-lora/predictions',[
-            'input'=>$args,'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$job['id'],'attempt'=>$attemptID,'secret'=>$secret]),
-            'webhook_events_filter'=>['completed']]);
+        $prediction=submitModelPrediction($file,$args,[
+            'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$job['id'],'attempt'=>$attemptID,'secret'=>$secret]),
+            'webhook_events_filter'=>['completed']],$job);
         acceptRetryPrediction($job['id'],$attemptID,$prediction);
     } catch (ProviderFailure $failure) {
         $fresh=retryJob($job['id']);
@@ -229,7 +234,8 @@ function reconcileRetryAttempt(array $job,array $attempt): ?array {
             $created=strtotime($candidate['created_at'] ?? '');
             if (!$created) throw new RuntimeException('Prediction history timestamp missing.');
             if ($created<$since) { $covered=true; continue; }
-            if (($candidate['model'] ?? '')!=='qwen/qwen-image-edit-plus-lora' || ($candidate['source'] ?? '')==='web') continue;
+            if (($candidate['model'] ?? '')!==($job['provider_model'] ?? QWEN_PROVIDER) || ($candidate['source'] ?? '')==='web') continue;
+            if (!empty($job['provider_version']) && ($candidate['version'] ?? '')!==$job['provider_version']) continue;
             if (retryWebhookMatches($candidate,$job,$attempt)) return provider('predictions/'.rawurlencode($candidate['id']));
             if (empty($candidate['webhook'])) {
                 if (++$inspected>25) throw new RuntimeException('Too many unidentified recent predictions.');

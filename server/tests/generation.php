@@ -13,7 +13,7 @@ function curl_exec(object $curl): string|bool {
     if (isset($curl->options[CURLOPT_WRITEFUNCTION])) {
         $GLOBALS['downloads']++;
         // JPEG SOF fixture: a 1x1 RGB image header.
-        $bytes=hex2bin('ffd8ffc00011080001000103011100021100031100ffd9');
+        $bytes=$GLOBALS['downloadBytes'] ?? hex2bin('ffd8ffc00011080001000103011100021100031100ffd9');
         if (($GLOBALS['badDownloadAt'] ?? 0)===$GLOBALS['downloads']) $bytes='broken';
         return $curl->options[CURLOPT_WRITEFUNCTION]($curl,$bytes)===strlen($bytes);
     }
@@ -39,6 +39,9 @@ function query(string $sql,array $params=[]): object {
     elseif (str_starts_with($sql,'INSERT INTO makelora_generations')) {
         [$id,$device,$model,$prompt,$hash]=$params;
         $jobs[$id]=['id'=>$id,'device_id'=>$device,'model_name'=>$model,'prompt'=>$prompt,'callback_hash'=>$hash,'status'=>'starting','provider_id'=>null,'logs'=>null,'dismissed_at'=>null,'next_check_at'=>null];
+    } elseif (str_starts_with($sql,'UPDATE makelora_generations SET model_family')) {
+        [$family,$model,$version,$id]=$params;
+        $jobs[$id]['model_family']=$family;$jobs[$id]['provider_model']=$model;$jobs[$id]['provider_version']=$version;
     } elseif (str_starts_with($sql,'UPDATE makelora_generations SET provider_id')) {
         $jobs[$params[1]]['provider_id']=$params[0];
     } elseif (str_starts_with($sql,'UPDATE makelora_generations SET next_check_at=DATE_ADD')) {
@@ -60,8 +63,8 @@ function query(string $sql,array $params=[]): object {
     } elseif (str_starts_with($sql,'SELECT * FROM makelora_generations')) {
         if (isset($jobs[$params[0]])) $rows=[$jobs[$params[0]]];
     } elseif (str_starts_with($sql,'INSERT INTO makelora_outputs')) {
-        [$id,$job,$index,$key]=$params;
-        $images[$id]=['id'=>$id,'generation_id'=>$job,'output_index'=>$index,'storage_key'=>$key,'deleted_at'=>null];
+        [$id,$job,$index,$key,$media,$mime]=$params;
+        $images[$id]=['id'=>$id,'generation_id'=>$job,'output_index'=>$index,'storage_key'=>$key,'media_type'=>$media,'mime_type'=>$mime,'deleted_at'=>null];
     } elseif (str_starts_with($sql,'SELECT id FROM makelora_outputs')) {
         $rows=array_values(array_filter($images,fn($row)=>$row['generation_id']===$params[0] && (str_contains($sql,'deleted_at IS NULL') ? ($row['deleted_at'] ?? null)===null:$row['output_index']===$params[1])));
     } elseif (str_starts_with($sql,'SELECT * FROM makelora_outputs')) {
@@ -72,7 +75,7 @@ function query(string $sql,array $params=[]): object {
     } elseif (str_starts_with($sql,'SELECT o.id')) {
         foreach ($images as $image) if ($image['deleted_at']===null && strcmp($image['id'],$params[0])<0) {
             $job=$jobs[$image['generation_id']];
-            $rows[]=['id'=>$image['id'],'model'=>$job['model_name'],'prompt'=>$job['prompt'],'date'=>'2026-11-11T12:00:00Z'];
+            $rows[]=['id'=>$image['id'],'model'=>$job['model_name'],'prompt'=>$job['prompt'],'mediaType'=>$image['media_type'] ?? 'image','mimeType'=>$image['mime_type'] ?? 'image/jpeg','date'=>'2026-11-11T12:00:00Z'];
         }
         usort($rows,fn($a,$b)=>strcmp($b['id'],$a['id'])); $rows=array_slice($rows,0,101);
     } elseif (str_starts_with($sql,'SELECT * FROM makelora_devices')) {

@@ -236,4 +236,34 @@ private func generationBody(_ request: URLRequest) throws -> [String: Any] {
         XCTAssertNil(store.error)
     }
 
+    func testWanSubmissionIncludesVideoSettingsAndScalarImage() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory); GenerationStubProtocol.handler = nil }
+        let videoModel = GenerationModel(id: "wan-2.1-i2v-14b-480p", displayName: "Wan base", baseModel: "Wan-AI/Wan2.1-I2V-14B-480P", sizeBytes: 0, details: "", supported: true, family: "wan", mediaType: "video", isBase: true)
+        var submitted: [String: Any] = [:]
+        GenerationStubProtocol.handler = { request in
+            switch generationAction(request) {
+            case "models": return (200, ["models": []])
+            case "gallery": return (200, ["outputs": [], "jobs": []])
+            case "generate":
+                submitted = try generationBody(request)
+                return (201, ["id": "wan-job", "status": "starting"])
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        let store = GenerationStore(directory: directory, session: session())
+        await store.load(credential)
+        let options = WanGenerationOptions(negativePrompt: "blur", fastMode: "Off", guidance: 6, steps: 20, shift: 4, disableSafetyChecker: false)
+        let outcome = await store.generate(credential: credential, model: videoModel, image: Data([1]), prompt: "Move", ratio: "9:16", scale: 1, seed: "42", wan: options)
+        if case .submitted = outcome {} else { XCTFail("Wan should submit") }
+        XCTAssertEqual(submitted["image"] as? String, "data:image/jpeg;base64,AQ==")
+        XCTAssertEqual(submitted["aspect_ratio"] as? String, "9:16")
+        XCTAssertEqual(submitted["negative_prompt"] as? String, "blur")
+        XCTAssertEqual(submitted["sample_steps"] as? Int, 20)
+        XCTAssertEqual(submitted["sample_shift"] as? Int, 4)
+        XCTAssertEqual(submitted["fast_mode"] as? String, "Off")
+        XCTAssertEqual(submitted["disable_safety_checker"] as? Bool, false)
+        XCTAssertNil(submitted["output_format"])
+    }
+
 }
