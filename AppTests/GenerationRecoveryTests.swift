@@ -121,4 +121,55 @@ private func generationAction(_ request: URLRequest) -> String {
         XCTAssertEqual(submissions, 2)
         XCTAssertFalse(store.busy)
     }
+    func testQueuedRetryShowsScheduleAndCanBeStoppedWithoutBlockingSubmission() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory); GenerationStubProtocol.handler = nil }
+        var rows: [[String: Any]] = []
+        var optedIn = false
+        GenerationStubProtocol.handler = { request in
+            switch generationAction(request) {
+            case "models": return (200, ["models": []])
+            case "gallery": return (200, ["outputs": [], "jobs": rows])
+            case "generate":
+                var body = request.httpBody ?? Data()
+                if body.isEmpty, let stream = request.httpBodyStream {
+                    stream.open()
+                    defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable {
+                        let count = stream.read(&buffer, maxLength: buffer.count)
+                        if count <= 0 { break }
+                        body.append(contentsOf: buffer.prefix(count))
+                    }
+                }
+                if let value = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                    optedIn = value["retry_offline"] as? Bool == true
+                }
+                rows = [["id": "queued-job", "model": "Fixture", "prompt": "Edit", "status": "retry_scheduled",
+                         "latestStatus": "Retry scheduled", "retryEnabled": true, "canCancelRetries": true,
+                         "retryCount": 0, "nextRetryAt": "2026-11-12T12:30:00Z", "retryUntil": "2026-11-13T00:00:00Z"]]
+                return (200, ["id": "queued-job", "status": "retry_scheduled", "latestStatus": "Retry scheduled"])
+            case "cancel_retries":
+                rows[0]["status"] = "retry_canceled"; rows[0]["latestStatus"] = "Automatic retries stopped."
+                rows[0]["canCancelRetries"] = false; rows[0].removeValue(forKey: "nextRetryAt")
+                return (200, ["status": "retry_canceled"])
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        let store = GenerationStore(directory: directory, session: session())
+        await store.load(credential)
+        await submit(store)
+        XCTAssertTrue(optedIn)
+        XCTAssertFalse(store.busy)
+        let job = try XCTUnwrap(store.galleryJobs.first)
+        XCTAssertEqual(job.canCancelRetries, true)
+        XCTAssertNotNil(job.nextRetryAt)
+        XCTAssertFalse(job.isProcessing)
+        XCTAssertNil(store.error, "A queued retry must not show the submission as an unrecoverable error")
+        let stopped = await store.cancelRetries(job)
+        XCTAssertTrue(stopped)
+        XCTAssertEqual(store.galleryJobs.first?.status, "retry_canceled")
+        XCTAssertEqual(store.galleryJobs.first?.canCancelRetries, false)
+    }
+
 }

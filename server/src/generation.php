@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/private-session.php';
+require_once __DIR__.'/retry-queue.php';
 function supportedGenerationModel(?string $model): bool {
     return in_array(strtolower($model ?? ''), ['qwen/qwen-image-edit-2509','qwen-image-edit-2509'], true);
 }
@@ -115,12 +116,13 @@ function latestGenerationStatus(array $job): string {
     return $status==='starting' ? 'Starting…' : 'Processing…';
 }
 function storedPrediction(array $job): array {
-    return ['id'=>$job['id'],'status'=>$job['status'],'logs'=>$job['logs'] ?? '', 'latestStatus'=>latestGenerationStatus($job),
+    return retryPublicFields($job) + ['id'=>$job['id'],'status'=>$job['status'],'logs'=>$job['logs'] ?? '', 'latestStatus'=>latestGenerationStatus($job),
         'error'=>in_array($job['status'],['failed','canceled'],true) ? latestGenerationStatus($job) : null,
         'retryAfter'=>isset($job['next_check_at']) ? max(0,strtotime($job['next_check_at'].' UTC')-time()) : 0];
 }
-function syncGeneration(array $job, bool $force=false): array {
+function syncGeneration(array $job, bool $force=false, bool $direct=false): array {
     global $db;
+    if (!$direct && !empty($job['retry_enabled'])) return syncRetryGeneration($job,$force);
     if (in_array($job['status'],['succeeded','failed','canceled'],true)) return storedPrediction($job);
     if (!$job['provider_id']) return storedPrediction(array_merge($job,['status'=>'unconfirmed']));
     if (!$force) {
@@ -138,15 +140,22 @@ function syncGeneration(array $job, bool $force=false): array {
         query('UPDATE makelora_generations SET next_check_at=? WHERE id=?',[$next,$job['id']]);
         throw $error;
     }
+    return archiveGenerationPrediction($job,$prediction);
+}
+function archiveGenerationPrediction(array $job,array $prediction,int $outputOffset=0,bool $preserveState=false): array {
+    global $db;
     $written=[];
     $db->beginTransaction();
     try {
         $job=query('SELECT * FROM makelora_generations WHERE id=? FOR UPDATE',[$job['id']])->fetch();
-        if (in_array($job['status'],['succeeded','failed','canceled'],true)) { $db->commit(); return storedPrediction($job); }
+        if (empty($job['retry_enabled']) && in_array($job['status'],['succeeded','failed','canceled'],true)) { $db->commit(); return storedPrediction($job); }
+        if ($preserveState && $prediction['status']!=='succeeded') { $db->commit(); return storedPrediction($job); }
         if ($prediction['status']==='succeeded') {
             $urls=$prediction['output'] ?? [];
             if (!is_array($urls) || !$urls) throw new RuntimeException('Missing provider outputs.');
             foreach ($urls as $index=>$url) {
+                if (!is_int($index) || $index<0 || $index>=10000) throw new RuntimeException('Invalid output index.');
+                $index+=$outputOffset;
                 // Tombstones prevent retries from recreating removed gallery images.
                 if (query('SELECT id FROM makelora_outputs WHERE generation_id=? AND output_index=?',[$job['id'],$index])->fetch()) continue;
                 $id=sprintf('%016x',(int)(microtime(true)*1000000)).bin2hex(random_bytes(24));
@@ -161,7 +170,7 @@ function syncGeneration(array $job, bool $force=false): array {
                 query('INSERT INTO makelora_outputs (id,generation_id,output_index,storage_key,created_at) VALUES (?,?,?,?,UTC_TIMESTAMP())',[$id,$job['id'],$index,$filename]);
             }
         }
-        $job['status']=$prediction['status'];
+        if ($job['status']!=='succeeded') $job['status']=$prediction['status'];
         $job['logs']=preg_replace('/^[\x80-\xBF]+/','',substr($prediction['logs'] ?? '',-20000));
         if ($job['status']==='failed') {
             $code=is_string($prediction['error'] ?? null) && preg_match('/\bE[0-9]{4}\b/',$prediction['error'],$match) ? ' ('.$match[0].')' : '';
@@ -177,6 +186,7 @@ function syncGeneration(array $job, bool $force=false): array {
     }
 }
 function generationWebhook(?array $payload=null): never {
+    if (isset($_GET['attempt'])) retryGenerationWebhook($payload);
     $id=$_GET['id'] ?? ''; $secret=$_GET['secret'] ?? '';
     if (!is_string($id) || !is_string($secret) || !preg_match('/^[a-f0-9]{64}$/D',$secret)) fail('Invalid callback.',403);
     $job=query('SELECT * FROM makelora_generations WHERE id=?',[$id])->fetch();
@@ -204,6 +214,8 @@ function generationWebhook(?array $payload=null): never {
 }
 function startGeneration(array $input, array $device): array {
     global $config;
+    if (isset($input['retry_offline']) && !is_bool($input['retry_offline'])) fail('Invalid retry option.');
+    if ($input['retry_offline'] ?? false) return startRetryGeneration($input,$device);
     $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model'] ?? ''])->fetch();
     if (!$file || !supportedGenerationModel($file['target_model'])) fail('Choose a Qwen-edit weight.');
     $args=generationSettings($input);
@@ -236,11 +248,12 @@ function galleryPage(string $before=''): array {
     $rows=array_slice($rows,0,100);
     $jobs=[];
     if ($before==='') {
-        $jobs=query("SELECT id,model_name AS model,COALESCE(prompt,'') AS prompt,status,logs,provider_id FROM makelora_generations WHERE dismissed_at IS NULL AND status<>'succeeded' ORDER BY created_at DESC,id DESC LIMIT 100")->fetchAll();
+        $jobs=query("SELECT id,model_name AS model,COALESCE(prompt,'') AS prompt,status,logs,provider_id,retry_enabled,retry_until,next_retry_at,retry_count,retry_cancelled_at FROM makelora_generations WHERE dismissed_at IS NULL AND status<>'succeeded' ORDER BY created_at DESC,id DESC LIMIT 100")->fetchAll();
         foreach ($jobs as &$job) {
             if (!$job['provider_id'] && $job['status']==='starting') $job['status']='unconfirmed';
             $job['latestStatus']=$job['status']==='unconfirmed' ? 'Submission not confirmed. Remove this tile to dismiss it; the request may still complete.' : latestGenerationStatus($job);
-            unset($job['logs'],$job['provider_id']);
+            $job=retryPublicFields($job)+$job;
+            unset($job['logs'],$job['provider_id'],$job['retry_enabled'],$job['retry_until'],$job['next_retry_at'],$job['retry_count'],$job['retry_cancelled_at']);
         }
     }
     return ['outputs'=>$rows,'jobs'=>$jobs,'next'=>$more ? $rows[count($rows)-1]['id'] : null];
@@ -248,6 +261,7 @@ function galleryPage(string $before=''): array {
 function dismissGeneration(string $id): void {
     if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D',$id)) fail('Invalid generation.');
     if (!query('SELECT * FROM makelora_generations WHERE id=?',[$id])->fetch()) fail('Generation not found.',404);
+    cancelGenerationRetries($id);
     // Keep the callback/job record: dismissal never deletes completed originals or cancels a paid run.
     query('UPDATE makelora_generations SET dismissed_at=UTC_TIMESTAMP() WHERE id=?',[$id]);
 }
@@ -282,6 +296,9 @@ function generationAPI(string $action, array $device): void {
             $file['supported']=supportedGenerationModel($file['baseModel']);
         }
         jsonResponse(['models'=>$files]);
+    }
+    if ($action==='cancel_retries' && $method==='POST') {
+        cancelGenerationRetries($_GET['id'] ?? ''); jsonResponse(['status'=>'retry_canceled']);
     }
     if ($action==='dismiss_generation' && $method==='POST') {
         dismissGeneration($_GET['id'] ?? ''); jsonResponse(['status'=>'dismissed']);

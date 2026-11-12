@@ -134,7 +134,8 @@ and credentials afterwards. No iOS build/release is part of a server deployment.
 
 For an existing installation, apply `migrations/004_generations.sql` if generation
 has never been installed, then `migrations/005_server_gallery.sql` and
-`migrations/006_generation_recovery.sql` before deploying.
+`migrations/006_generation_recovery.sql` and
+`migrations/007_generation_retries.sql` before deploying.
 New installations use the updated `schema.sql` instead of replaying migrations.
 Migration 005 preserves older prediction IDs. PHP requires cURL and outbound
 HTTPS access to `api.replicate.com` and `*.replicate.delivery`. The existing saved
@@ -143,7 +144,8 @@ Replicate token is reused; no provider credential is returned to a device.
 Active paired devices can:
 - GET `api.php?action=models` for the weight catalog.
 - POST `action=generate` with `model` (catalog SHA-256), `image` (JPEG data URI),
-  `prompt`, `aspect_ratio`, `lora_scale` and optional integer `seed`.
+  `prompt`, `aspect_ratio`, `lora_scale`, optional integer `seed`, and optional
+  boolean `retry_offline` (omitted means one-shot).
 - GET `action=prediction&id=...` to poll a server job, including a job started by
   another approved device.
 - GET `action=gallery` to list the shared server gallery. Pages contain up to 100
@@ -153,8 +155,10 @@ Active paired devices can:
   updates that message; successful archival replaces the job tile with images.
 - GET `action=output&id=...` to view a private archived JPG.
 - POST `action=remove_output&id=...` to remove an image for every device.
+- POST `action=cancel_retries&id=...` to stop future submission attempts. An
+  already accepted provider run can still finish and archive its outputs.
 - POST `action=dismiss_generation&id=...` to hide a failed, unconfirmed or active
-  generation tile for every device. This does not cancel a paid run or delete its
+  generation tile for every device and stop its automatic retries. This does not cancel a paid run or delete its
   outputs. The job/callback record remains so later completion still archives
   images. Dismissal works even when Replicate is unavailable.
 
@@ -202,6 +206,41 @@ A provider prediction returning 404 becomes a failed, dismissible tile.
 Dismissal and callback retries never resurrect the tile or delete archived
 originals. Migration 006 adds the dismissal and next-check timestamps.
 
+### Offline submission retries
+
+The updated composer enables **Retry temporary failures** by default. With
+`retry_offline: true`, one durable gallery tile tracks the initial submission
+and up to 24 retries, spaced 30 minutes apart within a 12-hour window. Network
+errors, HTTP 408/429 and provider 5xx qualify; authentication, billing and input
+errors stop immediately. Accepted predictions are only polled and archived;
+a failed inference is not automatically submitted again. The app can close
+without stopping the queue. **Stop retries** or **Remove tile** stops future
+attempts. Revoking the submitting device also prevents further submissions.
+
+The server privately retains validated input image/prompt/settings under
+`private_session_directory/retry-inputs` (directory 0700, files 0600). It removes
+active copies after confirmed acceptance, cancellation or expiry. The worker
+cleans expired crash leftovers; existing backups follow their normal retention.
+Each attempt creates fresh signed weight/callback URLs and uses the saved
+server token. An uncertain submission is reconciled against provider history
+before another POST. Missing or ambiguous history pauses retries rather than
+risking a blind duplicate; this is not an exactly-once provider guarantee.
+Older failed jobs have no retained image and must be submitted again.
+
+After deploying the code and migrations, explicitly install the worker timer:
+
+```sh
+bash server/deploy/install-retry-worker.sh
+```
+
+This is a production activation step, separate from normal deployment. It checks
+configuration/schema, installs the systemd service/timer and enables a queue
+pass every minute. No device connection is needed. Inspect with
+`systemctl status makelora-generation-retries.timer` and
+`journalctl -u makelora-generation-retries.service`. Disabling the timer pauses
+background processing; queued work remains stored. The CLI `--check` validates
+setup without processing jobs or contacting Replicate.
+
 ### Server archival
 
 Generated originals are stored under `private_session_directory/outputs`,
@@ -223,8 +262,7 @@ polling serialize on the job row; deletion tombstones prevent image resurrection
 Completion callbacks archive outputs while the app is closed; polling also
 retries archival if a callback fails. A callback can recover a provider ID when
 the create response was lost or has not yet been recorded, after verifying that
-the provider prediction contains the matching callback. No new scheduled jobs
-are installed. Keep `base_url` publicly reachable over HTTPS without redirects,
+the provider prediction contains the matching callback. Background submission retries require the separately installed timer above. Keep `base_url` publicly reachable over HTTPS without redirects,
 allow the callback through the frontend, and permit image submissions up to
 16 MB. Provider output retention and callback retry windows still limit recovery
 during an extended server outage. If submission loses its response before a job
@@ -238,12 +276,19 @@ Inside development, run:
 ```sh
 php -n server/tests/generation.php
 php -n server/tests/weight_download.php
+php -n server/tests/retry_queue.php
 php server/tests/gallery_schema.php
+php server/tests/retry_schema.php
 ```
 
+The fake-provider suites use no network or paid requests and cover retry timing,
+expiry, cancellation, response loss, duplicate prevention and archival recovery.
 The first uses a fake provider/database to test pairing-token rejection, shared
 access from two devices, callback archival without a client, invalid output
 rollback, missing-create-response recovery, pagination, deletion and retry
 idempotency. It starts no paid jobs. The SQL check requires the VM's existing
 `/home/dev/projects/.test-config/makelora.php` credentials and uses temporary
-tables only; it never applies production migrations.
+tables only; it never applies production migrations. Set `MAKELORA_TEST_CONFIG`
+to another existing VM `.test-config` PHP file when needed (for example the
+shared `lensswap.php` test configuration); the schema checks reject database
+names that do not contain `test`.

@@ -21,7 +21,12 @@ struct GenerationJob: Decodable, Identifiable {
     let prompt: String
     var status: String
     var latestStatus: String
-    var isProcessing: Bool { ["submitting", "starting", "processing"].contains(status) }
+    var retryEnabled: Bool? = nil
+    var nextRetryAt: Date? = nil
+    var retryUntil: Date? = nil
+    var retryCount: Int? = nil
+    var canCancelRetries: Bool? = nil
+    var isProcessing: Bool { ["submitting", "starting", "processing", "retry_submitting"].contains(status) }
 }
 private struct Prediction: Decodable {
     let id: String
@@ -127,6 +132,14 @@ private struct GenerationServiceError: Decodable, LocalizedError {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
+    func cancelRetries(_ job: GenerationJob) async -> Bool {
+        guard let credential = activeCredential else { return false }
+        do {
+            _ = try await request("cancel_retries", credential: credential, body: [:], id: job.id)
+            await refreshGallery()
+            return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
     func remove(_ output: GenerationOutput) async -> Bool {
         guard let credential = activeCredential else { return false }
         do {
@@ -208,14 +221,14 @@ private struct GenerationServiceError: Decodable, LocalizedError {
             await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
-    func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String) async {
+    func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true) async {
         guard !busy else { return }
         activeCredential = credential
         busy = true; error = nil
         localJob = GenerationJob(id: "submission-" + UUID().uuidString, model: model.displayName, prompt: prompt, status: "submitting", latestStatus: "Submitting…")
         defer { busy = false }
         do {
-            var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale]
+            var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale, "retry_offline": retryOffline]
             if !seed.isEmpty {
                 guard let value = Int(seed), (0...2147483647).contains(value) else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Seed must be a whole number from 0 to 2147483647."]) }
                 body["seed"] = value

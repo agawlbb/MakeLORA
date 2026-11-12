@@ -69,6 +69,11 @@ replace their pending tiles. Failed or canceled tiles stop animating and have a
 repeated alerts; **Check status** retries it. Failed, unconfirmed and active jobs
 never block another submission. Removing a tile hides it for all paired devices
 without canceling a submitted request; completed images still appear.
+**Retry temporary failures** keeps a submission queued on the server every
+30 minutes for up to 12 hours, even with the app closed. **Stop retries** ends
+future attempts. Accepted runs are monitored without resubmitting them. This
+requires the server retry worker; inputs are retained privately until acceptance,
+cancellation or expiry.
 Completed images are
 archived privately on the server through a completion callback, even if the app
 is closed. All approved paired devices view the same server-wide output gallery.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check durable MakeLORA retry queue every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Persistent=true
+Unit=makelora-generation-retries.service
+
+[Install]
+WantedBy=timers.target

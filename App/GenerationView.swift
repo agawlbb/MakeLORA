@@ -68,12 +68,13 @@ private struct GenerationProgressTile: View {
     let job: GenerationJob
     @EnvironmentObject private var store: GenerationStore
     @State private var confirmRemove = false
+    @State private var confirmStopRetries = false
     @State private var removing = false
     var body: some View {
         VStack(alignment: .leading) {
             VStack(spacing: 12) {
                 if job.isProcessing { ProgressView().controlSize(.large) }
-                else { Image(systemName: job.status == "paused" ? "pause.circle" : "exclamationmark.circle").font(.largeTitle).foregroundStyle(.secondary) }
+                else { Image(systemName: ["retry_scheduled", "retry_paused"].contains(job.status) ? "clock.arrow.circlepath" : (job.status == "paused" ? "pause.circle" : "exclamationmark.circle")).font(.largeTitle).foregroundStyle(.secondary) }
                 Text(job.latestStatus).font(.caption).multilineTextAlignment(.center).lineLimit(3)
                 if job.status == "paused" {
                     Button("Check status") { Task { await store.checkStatus(job) } }.font(.caption)
@@ -82,16 +83,26 @@ private struct GenerationProgressTile: View {
             .frame(maxWidth: .infinity).frame(height: 150)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             Text(job.model).font(.caption).lineLimit(1)
+            if job.canCancelRetries == true {
+                Button("Stop retries", systemImage: "stop.circle") { confirmStopRetries = true }
+                    .font(.caption).disabled(removing)
+            }
             Button("Remove tile", systemImage: "trash", role: .destructive) { confirmRemove = true }
                 .font(.caption).disabled(removing || job.status == "submitting")
         }
         .confirmationDialog(
-            ["failed", "canceled"].contains(job.status) ? "Remove this generation from the shared gallery?" : "Remove this tile? This does not cancel a submitted request. Any completed images will still appear.",
+            job.canCancelRetries == true ? "Remove this tile and stop its automatic retries? An already accepted request can still finish." : (["failed", "canceled"].contains(job.status) ? "Remove this generation from the shared gallery?" : "Remove this tile? This does not cancel a submitted request. Any completed images will still appear."),
             isPresented: $confirmRemove, titleVisibility: .visible
         ) {
             Button("Remove tile", role: .destructive) {
                 removing = true
                 Task { _ = await store.removeJob(job); removing = false }
+            }
+        }
+        .confirmationDialog("Stop automatic retries? A request already accepted by Replicate can still finish.", isPresented: $confirmStopRetries, titleVisibility: .visible) {
+            Button("Stop retries", role: .destructive) {
+                removing = true
+                Task { _ = await store.cancelRetries(job); removing = false }
             }
         }
         .contextMenu { Button("Show details") { store.error = job.latestStatus } }
@@ -148,6 +159,7 @@ private struct GenerationComposer: View {
     @State private var ratio = "match_input_image"
     @State private var scale = 1.0
     @State private var seed = ""
+    @State private var retryOffline = true
     @State private var files = false
     @State private var importing = false
     @State private var importError: String?
@@ -180,10 +192,15 @@ private struct GenerationComposer: View {
                         TextField("Seed (blank for random)", text: $seed).keyboardType(.numberPad)
                         LabeledContent("Output format", value: "JPG")
                         LabeledContent("Disable safety checker", value: "True")
+                        Toggle("Retry temporary failures", isOn: $retryOffline)
+                        if retryOffline {
+                            Text("Every 30 minutes for up to 12 hours, even while the app is closed. The server retains this input until submission is confirmed or retries end.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     Button("Generate image", systemImage: "sparkles") {
                         guard let credential = pairing.credential, let image else { return }
-                        Task { await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed) }
+                        Task { await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline) }
                         dismiss()
                     }.disabled(image == nil || importing || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy || pairing.credential == nil)
                 }

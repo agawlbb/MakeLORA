@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 // Only temporary tables in the VM test database; no production credentials.
-$config=require '/home/dev/projects/.test-config/makelora.php';
-$db=new PDO($config['dsn'],$config['user'],$config['password'],[
-    PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+require __DIR__.'/test_database.php';
+$db=vmTestDatabase();
 $old=file_get_contents(dirname(__DIR__).'/migrations/004_generations.sql');
 $db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',$old));
 $db->exec("INSERT INTO makelora_generations (id,device_id,created_at) VALUES ('old-provider-job','device-a',UTC_TIMESTAMP())");
 $migration=file_get_contents(dirname(__DIR__).'/migrations/005_server_gallery.sql');
 $db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',$migration));
 $db->exec(file_get_contents(dirname(__DIR__).'/migrations/006_generation_recovery.sql'));
+$db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',file_get_contents(dirname(__DIR__).'/migrations/007_generation_retries.sql')));
 $legacy=$db->query("SELECT * FROM makelora_generations WHERE id='old-provider-job'")->fetch();
 if ($legacy['provider_id']!=='old-provider-job') throw new RuntimeException('Legacy job migration failed.');
 $db->exec("UPDATE makelora_generations SET model_name='Model',prompt='Prompt' WHERE id='old-provider-job'");
