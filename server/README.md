@@ -133,7 +133,8 @@ and credentials afterwards. No iOS build/release is part of a server deployment.
 ## Mobile generation and shared output gallery
 
 For an existing installation, apply `migrations/004_generations.sql` if generation
-has never been installed, then `migrations/005_server_gallery.sql` before deploying.
+has never been installed, then `migrations/005_server_gallery.sql` and
+`migrations/006_generation_recovery.sql` before deploying.
 New installations use the updated `schema.sql` instead of replaying migrations.
 Migration 005 preserves older prediction IDs. PHP requires cURL and outbound
 HTTPS access to `api.replicate.com` and `*.replicate.delivery`. The existing saved
@@ -152,6 +153,10 @@ Active paired devices can:
   updates that message; successful archival replaces the job tile with images.
 - GET `action=output&id=...` to view a private archived JPG.
 - POST `action=remove_output&id=...` to remove an image for every device.
+- POST `action=dismiss_generation&id=...` to hide a failed, unconfirmed or active
+  generation tile for every device. This does not cancel a paid run or delete its
+  outputs. The job/callback record remains so later completion still archives
+  images. Dismissal works even when Replicate is unavailable.
 
 Every operation above requires `Authorization: Bearer <active device token>`.
 Missing, malformed, unknown and revoked tokens fail authentication; pending
@@ -169,6 +174,32 @@ The server supplies a one-hour signed `action=weights` URL to Replicate for the
 selected private weight. This authorizes only that file and exposes no
 device/provider token. It expires independently of device revocation and becomes
 invalid if the provider token changes.
+
+### Submission errors and status recovery
+
+Provider failures retain their HTTP category and return an actionable message
+with a random diagnostic reference. The server logs only that reference, HTTP
+status and transport error code; raw provider bodies, input data, signed URLs
+and credentials are excluded. Billing (402), token/access (401/403), validation
+(400/422), missing model/prediction (404), throttling (429), and network/provider
+outages are distinguished. Create rejections are stored as failed jobs even
+without a provider ID. Timeouts/5xx are `unconfirmed`, because the provider may
+have accepted the request before the response was lost. Errors include `jobID`,
+`jobStatus` and `retryAfter` when applicable.
+
+The app can always submit another generation once the current submission
+request ends; it no longer waits on a single locally persisted pending marker.
+Old pending markers are retired on upgrade, and jobs are restored from the
+server. Status-check failures are inline tile messages with a retry action,
+rather than repeated modal alerts. Polling does not create new predictions.
+
+A database claim caches each job's status check for at least ten seconds across
+all paired devices. Throttled/failed checks honor the provider's bounded
+`Retry-After` delay (default 30 seconds), avoiding a request loop.
+Completion callbacks bypass the short cache so archival happens promptly.
+A provider prediction returning 404 becomes a failed, dismissible tile.
+Dismissal and callback retries never resurrect the tile or delete archived
+originals. Migration 006 adds the dismissal and next-check timestamps.
 
 ### Server archival
 

@@ -35,7 +35,8 @@ try {
     if ($action==='disconnect' && $_SERVER['REQUEST_METHOD']==='POST') {
         query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[$row['id']]); jsonResponse(['status'=>'revoked']);
     }
-    if (in_array($action,['models','generate','prediction','gallery','output','remove_output'],true)) generationAPI($action,$row);
+    if (in_array($action,['models','generate','prediction','gallery','output','remove_output','dismiss_generation'],true)) generationAPI($action,$row);
     fail('Unknown operation or method.',405);
-} catch (JsonException|TypeError $e) { fail('Invalid request.'); }
+} catch (ProviderFailure $e) { $e->respond(); }
+catch (JsonException|TypeError $e) { fail('Invalid request.'); }
 catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); error_log('MakeLORA pairing failure: '.get_class($e)); fail('Pairing service unavailable.',503); }

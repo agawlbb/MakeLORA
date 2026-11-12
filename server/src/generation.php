@@ -14,16 +14,46 @@ function generationSettings(array $input): array {
     }
     return $args;
 }
+final class ProviderFailure extends RuntimeException {
+    public readonly string $reference;
+    public function __construct(public readonly int $httpStatus, public readonly int $retryAfter = 30, int $transportError = 0) {
+        $this->reference=bin2hex(random_bytes(6));
+        $reason=match ($httpStatus) {
+            401,403 => "Replicate rejected the server API token or model access (HTTP $httpStatus). Update the saved server token or its permissions before retrying.",
+            402 => 'Replicate requires billing credit (HTTP 402). Add credit in Replicate before submitting again.',
+            404 => 'Replicate could not find this model or generation (HTTP 404). Remove an unavailable generation tile, or check model availability before submitting again.',
+            400,422 => "Replicate rejected the generation settings (HTTP $httpStatus). Check the image, prompt and model settings before retrying.",
+            429 => "Replicate rate limit reached (HTTP 429). Wait $retryAfter seconds before retrying.",
+            0 => 'The server could not reach Replicate. Check server network access and retry later.',
+            default => "Replicate is temporarily unavailable (HTTP $httpStatus). Retry later."
+        };
+        parent::__construct($reason.' Reference: '.$this->reference);
+        // Never log provider response bodies, input images, URLs or credentials.
+        error_log("MakeLORA provider failure ref={$this->reference} http=$httpStatus transport=$transportError");
+    }
+    public function definiteRejection(): bool { return $this->httpStatus>=400 && $this->httpStatus<500 && $this->httpStatus!==408; }
+    public function respond(?string $jobID=null, ?string $jobStatus=null): never {
+        $reply=['error'=>$this->getMessage(),'reference'=>$this->reference,'retryAfter'=>$this->retryAfter];
+        if ($jobID!==null) $reply['jobID']=$jobID;
+        if ($jobStatus!==null) $reply['jobStatus']=$jobStatus;
+        jsonResponse($reply,$this->httpStatus===429 ? 429 : 502);
+    }
+}
 function provider(string $path, ?array $body = null): array {
     global $config;
     $token = readReplicateToken($config['private_session_directory']);
     if (!$token) fail('Configure the Replicate token on the server first.',503);
     $curl = curl_init('https://api.replicate.com/v1/'.$path);
+    $retryAfter=30;
     curl_setopt_array($curl, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>60,
+        CURLOPT_HEADERFUNCTION=>static function($handle,string $header) use (&$retryAfter): int {
+            if (preg_match('/^Retry-After:\s*([0-9]+)/i',$header,$match)) $retryAfter=max(5,min(300,(int)$match[1]));
+            return strlen($header);
+        },
         CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$token,'Content-Type: application/json']]);
     if ($body !== null) curl_setopt_array($curl,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>json_encode($body,JSON_THROW_ON_ERROR)]);
-    $raw=curl_exec($curl); $code=curl_getinfo($curl,CURLINFO_RESPONSE_CODE); curl_close($curl);
-    if ($raw===false || $code<200 || $code>=300) fail('Generation provider request failed. Check server configuration or try again.',502);
+    $raw=curl_exec($curl); $code=curl_getinfo($curl,CURLINFO_RESPONSE_CODE); $transportError=curl_errno($curl); curl_close($curl);
+    if ($raw===false || $code<200 || $code>=300) throw new ProviderFailure($raw===false ? 0 : $code,$retryAfter,$transportError);
     return json_decode($raw,true,512,JSON_THROW_ON_ERROR);
 }
 function serveWeights(): never {
@@ -70,7 +100,11 @@ function downloadOutput(string $url, string $path): void {
 }
 function latestGenerationStatus(array $job): string {
     $status=$job['status'];
-    if (!in_array($status,['starting','processing'],true)) return ucfirst($status);
+    if (!in_array($status,['starting','processing'],true)) {
+        $message=$job['logs'] ?? '';
+        if ($status==='failed' && str_starts_with($message,'Replicate ') && !str_contains($message,"\n") && !str_contains($message,"\r")) return $message;
+        return ucfirst($status);
+    }
     $lines=preg_split('/[\r\n]+/',preg_replace('/\x1b\[[0-9;]*[a-zA-Z]/','',$job['logs'] ?? ''));
     foreach (array_reverse($lines) as $line) {
         $line=trim($line);
@@ -80,14 +114,28 @@ function latestGenerationStatus(array $job): string {
 }
 function storedPrediction(array $job): array {
     return ['id'=>$job['id'],'status'=>$job['status'],'logs'=>$job['logs'] ?? '', 'latestStatus'=>latestGenerationStatus($job),
-        'error'=>in_array($job['status'],['failed','canceled'],true) ? 'Generation '.$job['status'].'.' : null];
+        'error'=>in_array($job['status'],['failed','canceled'],true) ? latestGenerationStatus($job) : null,
+        'retryAfter'=>isset($job['next_check_at']) ? max(0,strtotime($job['next_check_at'].' UTC')-time()) : 0];
 }
-function syncGeneration(array $job): array {
+function syncGeneration(array $job, bool $force=false): array {
     global $db;
     if (in_array($job['status'],['succeeded','failed','canceled'],true)) return storedPrediction($job);
-    if (!$job['provider_id']) fail('Generation submission is still being recorded. Try again shortly.',503);
+    if (!$job['provider_id']) return storedPrediction(array_merge($job,['status'=>'unconfirmed']));
+    if (!$force) {
+        $claim=query('UPDATE makelora_generations SET next_check_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 10 SECOND) WHERE id=? AND (next_check_at IS NULL OR next_check_at<=UTC_TIMESTAMP())',[$job['id']]);
+        if ($claim->rowCount()===0) return storedPrediction(query('SELECT * FROM makelora_generations WHERE id=?',[$job['id']])->fetch());
+    }
     // Always re-fetch the provider response; never trust webhook output URLs.
-    $prediction=provider('predictions/'.rawurlencode($job['provider_id']));
+    try { $prediction=provider('predictions/'.rawurlencode($job['provider_id'])); }
+    catch (ProviderFailure $error) {
+        $next=gmdate('Y-m-d H:i:s',time()+$error->retryAfter);
+        if ($error->httpStatus===404) {
+            query('UPDATE makelora_generations SET status=?,logs=? WHERE id=?',['failed',$error->getMessage(),$job['id']]);
+            return storedPrediction(array_merge($job,['status'=>'failed','logs'=>$error->getMessage()]));
+        }
+        query('UPDATE makelora_generations SET next_check_at=? WHERE id=?',[$next,$job['id']]);
+        throw $error;
+    }
     $written=[];
     $db->beginTransaction();
     try {
@@ -112,7 +160,11 @@ function syncGeneration(array $job): array {
             }
         }
         $job['status']=$prediction['status'];
-        $job['logs']=substr($prediction['logs'] ?? '',-20000);
+        $job['logs']=preg_replace('/^[\x80-\xBF]+/','',substr($prediction['logs'] ?? '',-20000));
+        if ($job['status']==='failed') {
+            $code=is_string($prediction['error'] ?? null) && preg_match('/\bE[0-9]{4}\b/',$prediction['error'],$match) ? ' ('.$match[0].')' : '';
+            $job['logs']="Replicate generation failed$code. Check the image, prompt and LoRA compatibility before submitting again.";
+        } elseif ($job['status']==='canceled') { $job['logs']='Generation canceled.'; }
         query('UPDATE makelora_generations SET status=?,logs=? WHERE id=?',[$job['status'],$job['logs'],$job['id']]);
         $db->commit();
         return storedPrediction($job);
@@ -145,7 +197,7 @@ function generationWebhook(?array $payload=null): never {
         query('UPDATE makelora_generations SET provider_id=? WHERE id=? AND provider_id IS NULL',[$candidate,$job['id']]);
         $job=query('SELECT * FROM makelora_generations WHERE id=?',[$job['id']])->fetch();
     }
-    syncGeneration($job);
+    syncGeneration($job,true);
     jsonResponse(['status'=>'received']);
 }
 function startGeneration(array $input, array $device): array {
@@ -162,9 +214,16 @@ function startGeneration(array $input, array $device): array {
     $args['lora_weights']=$base.http_build_query(['action'=>'weights','sha'=>$sha,'expires'=>$expires,'signature'=>hash_hmac('sha256',$sha.':'.$expires,$token)]);
     $id=bin2hex(random_bytes(32)); $callback=bin2hex(random_bytes(32));
     query('INSERT INTO makelora_generations (id,device_id,model_name,prompt,callback_hash,created_at) VALUES (?,?,?,?,?,UTC_TIMESTAMP())',[$id,$device['id'],$file['display_name'],$input['prompt'],hash('sha256',$callback)]);
-    $prediction=provider('models/qwen/qwen-image-edit-plus-lora/predictions',[
-        'input'=>$args,'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$id,'secret'=>$callback]),
-        'webhook_events_filter'=>['completed']]);
+    try {
+        $prediction=provider('models/qwen/qwen-image-edit-plus-lora/predictions',[
+            'input'=>$args,'webhook'=>$base.http_build_query(['action'=>'generation_webhook','id'=>$id,'secret'=>$callback]),
+            'webhook_events_filter'=>['completed']]);
+    } catch (ProviderFailure $error) {
+        // A timeout may occur after acceptance; a later authenticated callback can recover it.
+        $status=$error->definiteRejection() ? 'failed' : 'unconfirmed';
+        query('UPDATE makelora_generations SET status=?,logs=? WHERE id=?',[$status,$error->getMessage(),$id]);
+        $error->respond($id,$status);
+    }
     query('UPDATE makelora_generations SET provider_id=? WHERE id=?',[$prediction['id'],$id]);
     return ['id'=>$id,'status'=>$prediction['status'],'logs'=>'','latestStatus'=>latestGenerationStatus(['status'=>$prediction['status'],'logs'=>'']),'error'=>null];
 }
@@ -175,13 +234,20 @@ function galleryPage(string $before=''): array {
     $rows=array_slice($rows,0,100);
     $jobs=[];
     if ($before==='') {
-        $jobs=query("SELECT id,model_name AS model,COALESCE(prompt,'') AS prompt,status,logs FROM makelora_generations WHERE provider_id IS NOT NULL AND status<>'succeeded' ORDER BY created_at DESC,id DESC LIMIT 100")->fetchAll();
+        $jobs=query("SELECT id,model_name AS model,COALESCE(prompt,'') AS prompt,status,logs,provider_id FROM makelora_generations WHERE dismissed_at IS NULL AND status<>'succeeded' ORDER BY created_at DESC,id DESC LIMIT 100")->fetchAll();
         foreach ($jobs as &$job) {
-            $job['latestStatus']=latestGenerationStatus($job);
-            unset($job['logs']);
+            if (!$job['provider_id'] && $job['status']==='starting') $job['status']='unconfirmed';
+            $job['latestStatus']=$job['status']==='unconfirmed' ? 'Submission not confirmed. Remove this tile to dismiss it; the request may still complete.' : latestGenerationStatus($job);
+            unset($job['logs'],$job['provider_id']);
         }
     }
     return ['outputs'=>$rows,'jobs'=>$jobs,'next'=>$more ? $rows[count($rows)-1]['id'] : null];
+}
+function dismissGeneration(string $id): void {
+    if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D',$id)) fail('Invalid generation.');
+    if (!query('SELECT * FROM makelora_generations WHERE id=?',[$id])->fetch()) fail('Generation not found.',404);
+    // Keep the callback/job record: dismissal never deletes completed originals or cancels a paid run.
+    query('UPDATE makelora_generations SET dismissed_at=UTC_TIMESTAMP() WHERE id=?',[$id]);
 }
 function outputRecord(string $id): array {
     $row=query('SELECT * FROM makelora_outputs WHERE id=? AND deleted_at IS NULL',[$id])->fetch();
@@ -214,6 +280,9 @@ function generationAPI(string $action, array $device): void {
             $file['supported']=supportedGenerationModel($file['baseModel']);
         }
         jsonResponse(['models'=>$files]);
+    }
+    if ($action==='dismiss_generation' && $method==='POST') {
+        dismissGeneration($_GET['id'] ?? ''); jsonResponse(['status'=>'dismissed']);
     }
     if ($action==='gallery' && $method==='GET') jsonResponse(galleryPage($_GET['before'] ?? ''));
     if ($action==='output' && $method==='GET') serveOutput($_GET['id'] ?? '');

@@ -53,7 +53,6 @@ struct GenerationView: View {
         .task(id: "\(pairing.credential?.deviceID ?? "")-\(phase)") {
             guard phase == .active else { return }
             await store.load(pairing.credential)
-            Task { await store.resume() }
             await store.watchGallery()
         }
         .sheet(isPresented: $serverSettings) { ServerView() }
@@ -68,22 +67,36 @@ struct GenerationView: View {
 private struct GenerationProgressTile: View {
     let job: GenerationJob
     @EnvironmentObject private var store: GenerationStore
+    @State private var confirmRemove = false
+    @State private var removing = false
     var body: some View {
         VStack(alignment: .leading) {
             VStack(spacing: 12) {
                 if job.isProcessing { ProgressView().controlSize(.large) }
                 else { Image(systemName: job.status == "paused" ? "pause.circle" : "exclamationmark.circle").font(.largeTitle).foregroundStyle(.secondary) }
                 Text(job.latestStatus).font(.caption).multilineTextAlignment(.center).lineLimit(3)
-                if job.status == "paused" && store.hasPending {
-                    Button("Resume") { Task { await store.resume() } }.font(.caption)
+                if job.status == "paused" {
+                    Button("Check status") { Task { await store.checkStatus(job) } }.font(.caption)
                 }
             }
             .frame(maxWidth: .infinity).frame(height: 150)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             Text(job.model).font(.caption).lineLimit(1)
+            Button("Remove tile", systemImage: "trash", role: .destructive) { confirmRemove = true }
+                .font(.caption).disabled(removing || job.status == "submitting")
         }
+        .confirmationDialog(
+            ["failed", "canceled"].contains(job.status) ? "Remove this generation from the shared gallery?" : "Remove this tile? This does not cancel a submitted request. Any completed images will still appear.",
+            isPresented: $confirmRemove, titleVisibility: .visible
+        ) {
+            Button("Remove tile", role: .destructive) {
+                removing = true
+                Task { _ = await store.removeJob(job); removing = false }
+            }
+        }
+        .contextMenu { Button("Show details") { store.error = job.latestStatus } }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Upcoming image, \(job.latestStatus)")
+        .accessibilityLabel("Generation, \(job.latestStatus)")
     }
 }
 private struct ServerGenerationImage: View {
@@ -172,7 +185,7 @@ private struct GenerationComposer: View {
                         guard let credential = pairing.credential, let image else { return }
                         Task { await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed) }
                         dismiss()
-                    }.disabled(image == nil || importing || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy || store.hasPending || pairing.credential == nil)
+                    }.disabled(image == nil || importing || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy || pairing.credential == nil)
                 }
             }
             .navigationTitle(useModel ? "Generate image" : "Model details")

@@ -64,7 +64,12 @@ saved Replicate token; the app never receives that token.
 Each submission immediately adds an upcoming-image tile to the gallery. Its
 spinner animates while processing, and a single status line updates to the latest
 provider message. All paired devices see pending server jobs; completed images
-replace their pending tiles. Failed or canceled tiles stop animating. Completed images are
+replace their pending tiles. Failed or canceled tiles stop animating and have a
+**Remove tile** action. A stalled status check appears on its tile instead of
+repeated alerts; **Check status** retries it. Failed, unconfirmed and active jobs
+never block another submission. Removing a tile hides it for all paired devices
+without canceling a submitted request; completed images still appear.
+Completed images are
 archived privately on the server through a completion callback, even if the app
 is closed. All approved paired devices view the same server-wide output gallery.
 A valid active device credential is required to list weights, generate, view
@@ -74,7 +79,7 @@ The gallery displays images in memory without saving local image files or using
 a disk URL cache. Tap an image for a larger view or to remove it from the server
 gallery for all devices. **Share** fetches a temporary JPG for the iOS share sheet;
 choose Save to Files, Save Image or another destination to keep your own copy.
-The temporary share file is removed when sharing ends. Pending generation IDs
-are saved locally so status monitoring can resume after interruption; gallery
-images remain on the server. Dataset preparation remains offline. Future server deployments target the VPS unless explicitly requested
+The temporary share file is removed when sharing ends. Generation tracking is
+restored from the server gallery after interruption; gallery images remain on
+the server. Dataset preparation remains offline. Future server deployments target the VPS unless explicitly requested
 otherwise. See [server operations](server/README.md).

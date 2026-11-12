@@ -9,6 +9,7 @@ $db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',$old
 $db->exec("INSERT INTO makelora_generations (id,device_id,created_at) VALUES ('old-provider-job','device-a',UTC_TIMESTAMP())");
 $migration=file_get_contents(dirname(__DIR__).'/migrations/005_server_gallery.sql');
 $db->exec(str_replace('CREATE TABLE IF NOT EXISTS','CREATE TEMPORARY TABLE',$migration));
+$db->exec(file_get_contents(dirname(__DIR__).'/migrations/006_generation_recovery.sql'));
 $legacy=$db->query("SELECT * FROM makelora_generations WHERE id='old-provider-job'")->fetch();
 if ($legacy['provider_id']!=='old-provider-job') throw new RuntimeException('Legacy job migration failed.');
 $db->exec("UPDATE makelora_generations SET model_name='Model',prompt='Prompt' WHERE id='old-provider-job'");

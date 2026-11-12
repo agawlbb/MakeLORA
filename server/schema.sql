@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS makelora_generations (
  callback_hash CHAR(64) NULL,
  status VARCHAR(24) NOT NULL DEFAULT 'starting',
  logs TEXT NULL,
+ dismissed_at DATETIME NULL,
+ next_check_at DATETIME NULL,
  created_at DATETIME NOT NULL
 );
 

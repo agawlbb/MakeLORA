@@ -21,20 +21,21 @@ struct GenerationJob: Decodable, Identifiable {
     let prompt: String
     var status: String
     var latestStatus: String
-    var isProcessing: Bool { !["succeeded", "failed", "canceled", "paused"].contains(status) }
+    var isProcessing: Bool { ["submitting", "starting", "processing"].contains(status) }
 }
 private struct Prediction: Decodable {
     let id: String
     let status: String
     let latestStatus: String?
     let error: String?
+    let retryAfter: Int?
 }
-private struct PendingGeneration: Codable {
-    let id: String
-    let server: URL
-    let deviceID: String
-    let model: String
-    let prompt: String
+private struct GenerationServiceError: Decodable, LocalizedError {
+    let error: String
+    let retryAfter: Int?
+    let jobID: String?
+    let jobStatus: String?
+    var errorDescription: String? { error }
 }
 @MainActor final class GenerationStore: ObservableObject {
     @Published var models: [GenerationModel] = []
@@ -43,58 +44,88 @@ private struct PendingGeneration: Codable {
     @Published var jobs: [GenerationJob] = []
     @Published private var localJob: GenerationJob?
     @Published var error: String?
-    private let session: URLSession = {
+    private let session: URLSession
+    private let directory: URL
+    private let shareDirectory: URL
+    private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration, delegate: NoPairingRedirects(), delegateQueue: nil)
-    }()
-    private let directory: URL
-    private let shareDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("MakeLORAGenerationShares", isDirectory: true)
-    private var pending: PendingGeneration?
+    }
+    private var nextChecks: [String: Date] = [:]
+    @Published private var checkErrors: [String: String] = [:]
     private var activeCredential: DeviceCredential?
-    init() {
-        directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Generation", isDirectory: true)
+    init(directory: URL? = nil, session: URLSession? = nil) {
+        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Generation", isDirectory: true)
+        self.shareDirectory = directory?.appendingPathComponent("shares", isDirectory: true) ?? FileManager.default.temporaryDirectory.appendingPathComponent("MakeLORAGenerationShares", isDirectory: true)
+        self.session = session ?? Self.makeSession()
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: shareDirectory, withIntermediateDirectories: true)
             // Remove only temporary share files left by a previous terminated session.
             for file in try FileManager.default.contentsOfDirectory(at: shareDirectory, includingPropertiesForKeys: nil) {
                 try FileManager.default.removeItem(at: file)
             }
-            let job = directory.appendingPathComponent("pending.json")
-            if FileManager.default.fileExists(atPath: job.path) { pending = try JSONDecoder().decode(PendingGeneration.self, from: Data(contentsOf: job)) }
+            let job = self.directory.appendingPathComponent("pending.json")
+            // Server jobs replace the old single pending marker, which could block all submissions.
+            if FileManager.default.fileExists(atPath: job.path) { try FileManager.default.removeItem(at: job) }
         } catch { self.error = "Could not restore generation session: \(error.localizedDescription)" }
     }
     var galleryJobs: [GenerationJob] {
-        guard let localJob else { return jobs }
-        return [localJob] + jobs.filter { $0.id != localJob.id }
-    }
-    private func updateLocal(status: String, message: String) {
-        localJob?.status = status
-        localJob?.latestStatus = message
+        var visible = jobs.map { job in
+            var tile = job
+            if let message = checkErrors[job.id] {
+                tile.status = "paused"; tile.latestStatus = message
+            }
+            return tile
+        }
+        if let localJob { visible = [localJob] + visible.filter { $0.id != localJob.id } }
+        return visible
     }
     func watchGallery() async {
         while !Task.isCancelled {
-            if let credential = activeCredential {
-                // Local submissions already have their own status monitor.
-                for job in jobs where job.isProcessing && job.id != pending?.id {
-                    do { _ = try await request("prediction", credential: credential, id: job.id) }
-                    catch {
-                        if Task.isCancelled { return }
-                        // Gallery refresh retains the latest known status; retry next pass.
-                    }
-                }
+            for job in jobs where job.isProcessing && (nextChecks[job.id] ?? .distantPast) <= Date() {
+                await checkStatus(job)
+                if Task.isCancelled { return }
             }
             guard await refreshGallery() else { return }
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
         }
     }
-    private func savePending() throws {
-        // Device credentials stay in Keychain; persist only job metadata.
-        guard let pending else { return }
-        let data = try JSONEncoder().encode(pending)
-        try data.write(to: directory.appendingPathComponent("pending.json"), options: [.atomic, .completeFileProtection])
+    func checkStatus(_ job: GenerationJob) async {
+        guard let credential = activeCredential else { return }
+        do {
+            let data = try await request("prediction", credential: credential, id: job.id)
+            guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return }
+            let reply = try JSONDecoder().decode(Prediction.self, from: data)
+            checkErrors[job.id] = nil
+            nextChecks[job.id] = Date().addingTimeInterval(Double(max(10, reply.retryAfter ?? 0)))
+            if let index = jobs.firstIndex(where: { $0.id == job.id }) {
+                jobs[index].status = reply.status
+                jobs[index].latestStatus = reply.latestStatus ?? reply.status.capitalized
+            }
+            if reply.status == "succeeded" { await refreshGallery() }
+        } catch {
+            guard !Task.isCancelled, activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return }
+            // Status errors stay on their tile, rather than repeatedly interrupting with an alert.
+            checkErrors[job.id] = error.localizedDescription
+            nextChecks[job.id] = Date().addingTimeInterval(Double(max(10, (error as? GenerationServiceError)?.retryAfter ?? 30)))
+        }
+    }
+    func removeJob(_ job: GenerationJob) async -> Bool {
+        if job.id.hasPrefix("submission-") {
+            if localJob?.id == job.id { localJob = nil }
+            return true
+        }
+        guard let credential = activeCredential else { return false }
+        do {
+            _ = try await request("dismiss_generation", credential: credential, body: [:], id: job.id)
+            jobs.removeAll { $0.id == job.id }
+            if localJob?.id == job.id { localJob = nil }
+            nextChecks[job.id] = nil; checkErrors[job.id] = nil
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
     func remove(_ output: GenerationOutput) async -> Bool {
         guard let credential = activeCredential else { return false }
@@ -134,6 +165,9 @@ private struct PendingGeneration: Codable {
             } while before != nil
             guard activeCredential?.deviceID == credential.deviceID, activeCredential?.server == credential.server else { return false }
             outputs = collected; jobs = currentJobs
+            let ids = Set(currentJobs.map(\.id))
+            nextChecks = nextChecks.filter { ids.contains($0.key) }
+            checkErrors = checkErrors.filter { ids.contains($0.key) }
             return true
         } catch {
             if Task.isCancelled { return false }
@@ -155,15 +189,16 @@ private struct PendingGeneration: Codable {
         }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String: String])?["error"] ?? "Server request failed."
-            throw NSError(domain: "Generation", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+            if let serviceError = try? JSONDecoder().decode(GenerationServiceError.self, from: data) { throw serviceError }
+            throw NSError(domain: "Generation", code: (response as? HTTPURLResponse)?.statusCode ?? 0,
+                userInfo: [NSLocalizedDescriptionKey: "The server could not complete this request. Check the connection and retry."])
         }
         return data
     }
     func load(_ credential: DeviceCredential?) async {
         let changed = activeCredential?.deviceID != credential?.deviceID || activeCredential?.server != credential?.server
         activeCredential = credential
-        if changed || credential == nil { models = []; outputs = []; jobs = []; localJob = nil }
+        if changed || credential == nil { models = []; outputs = []; jobs = []; localJob = nil; nextChecks = [:]; checkErrors = [:] }
         guard let credential else { return }
         do {
             struct Catalog: Decodable { let models: [GenerationModel] }
@@ -174,7 +209,7 @@ private struct PendingGeneration: Codable {
         } catch { self.error = error.localizedDescription }
     }
     func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String) async {
-        guard !busy, pending == nil else { error = "Resume the pending generation before starting another."; return }
+        guard !busy else { return }
         activeCredential = credential
         busy = true; error = nil
         localJob = GenerationJob(id: "submission-" + UUID().uuidString, model: model.displayName, prompt: prompt, status: "submitting", latestStatus: "Submitting…")
@@ -186,46 +221,20 @@ private struct PendingGeneration: Codable {
                 body["seed"] = value
             }
             let reply = try JSONDecoder().decode(Prediction.self, from: await request("generate", credential: credential, body: body))
-            localJob = GenerationJob(id: reply.id, model: model.displayName, prompt: prompt, status: reply.status, latestStatus: reply.latestStatus ?? reply.status.capitalized)
-            pending = PendingGeneration(id: reply.id, server: credential.server, deviceID: credential.deviceID, model: model.displayName, prompt: prompt)
-            try savePending()
-            try await monitor()
+            jobs.insert(GenerationJob(id: reply.id, model: model.displayName, prompt: prompt, status: reply.status, latestStatus: reply.latestStatus ?? reply.status.capitalized), at: 0)
+            localJob = nil
+            await refreshGallery()
         } catch {
             self.error = error.localizedDescription
-            updateLocal(status: pending == nil ? "failed" : "paused", message: pending == nil ? "Submission failed" : "Updates paused")
-        }
-    }
-    func resume() async {
-        guard pending != nil, !busy else { return }
-        busy = true; defer { busy = false }
-        do { try await monitor() } catch {
-            self.error = error.localizedDescription
-            updateLocal(status: "paused", message: "Updates paused")
-        }
-    }
-    var hasPending: Bool { pending != nil }
-    private func monitor() async throws {
-        guard let job = pending else { return }
-        guard let credential = activeCredential, credential.server == job.server, credential.deviceID == job.deviceID else { throw NSError(domain: "Generation", code: 3, userInfo: [NSLocalizedDescriptionKey: "Reconnect to the server used for this generation."]) }
-        if localJob?.id != job.id {
-            localJob = GenerationJob(id: job.id, model: job.model, prompt: job.prompt, status: "starting", latestStatus: "Checking status…")
-        }
-        while true {
-            let reply = try JSONDecoder().decode(Prediction.self, from: await request("prediction", credential: credential, id: job.id))
-            updateLocal(status: reply.status, message: reply.latestStatus ?? reply.status.capitalized)
-            if reply.status == "succeeded" {
-                try finish()
-                await refreshGallery()
+            if let service = error as? GenerationServiceError, let id = service.jobID {
+                jobs.insert(GenerationJob(id: id, model: model.displayName, prompt: prompt, status: service.jobStatus ?? "unconfirmed", latestStatus: service.error), at: 0)
                 localJob = nil
-                return
+            } else {
+                // The response might be lost after acceptance. Dismissing this tile never cancels a paid request.
+                localJob?.status = "unconfirmed"
+                localJob?.latestStatus = error.localizedDescription
             }
-            if ["failed", "canceled"].contains(reply.status) { try finish(); error = reply.error ?? "Generation \(reply.status)."; return }
-            try await Task.sleep(for: .seconds(2))
         }
-    }
-    private func finish() throws {
-        let file = directory.appendingPathComponent("pending.json")
-        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
-        pending = nil
+        // A failed status check or another active job never prevents a fresh submission.
     }
 }
