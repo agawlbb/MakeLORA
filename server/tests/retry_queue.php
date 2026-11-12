@@ -126,6 +126,7 @@ try {
     foreach ([0,408,429,500,503] as $code) check(retryableSubmissionFailure(new ProviderFailure($code)),'Transient submission failure retryable');
     foreach ([400,401,402,403,404,422] as $code) check(!retryableSubmissionFailure(new ProviderFailure($code)),'Permanent failures stop');
     $id=newQueuedJob();$job=retryJob($id);$path=retryPayloadPath($job['retry_payload_key']);
+    check(isset($GLOBALS['recipes'][$id]) && is_file(recipeInputPath($id.'.jpg')),'Retry submission saves independent replay original');
     check(is_file($path) && (fileperms($path)&0777)===0600,'Input privately retained');
     check((fileperms(dirname($path))&0777)===0700,'Input directory private');
     $saved=json_decode(file_get_contents($path),true);

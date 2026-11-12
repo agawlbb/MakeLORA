@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import SwiftUI
 @testable import MakeLORA
 
 @MainActor final class GalleryViewerTests: XCTestCase {
@@ -63,4 +64,29 @@ import UIKit
         XCTAssertFalse(zoomed)
         controller.viewDidDisappear(false)
     }
+    func testPagingFollowsGalleryOrderAndStopsAtEnds() {
+        let outputs = (0..<3).map { GenerationOutput(id: "output-\($0)", model: "Fixture", prompt: "Edit", date: Date()) }
+        var selected = outputs[1].id
+        var zoomed = false
+        let pages = GalleryPages(outputs: outputs, selectedID: Binding(get: { selected }, set: { selected = $0 }), zoomed: Binding(get: { zoomed }, set: { zoomed = $0 }), load: { _ in Data() })
+        let coordinator = pages.makeCoordinator()
+        let pager = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .horizontal)
+        coordinator.pager = pager
+        coordinator.selectCurrent()
+        let middle = pager.viewControllers!.first!
+        let previous = coordinator.pageViewController(pager, viewControllerBefore: middle) as? GalleryImageController
+        let next = coordinator.pageViewController(pager, viewControllerAfter: middle) as? GalleryImageController
+        XCTAssertEqual(previous?.output.id, outputs[0].id)
+        XCTAssertEqual(next?.output.id, outputs[2].id)
+        XCTAssertNil(coordinator.pageViewController(pager, viewControllerBefore: previous!))
+        XCTAssertNil(coordinator.pageViewController(pager, viewControllerAfter: next!))
+        coordinator.setPagingEnabled(false)
+        XCTAssertTrue(pager.view.subviews.compactMap { $0 as? UIScrollView }.allSatisfy { !$0.isScrollEnabled })
+        coordinator.setPagingEnabled(true)
+        pager.setViewControllers([next!], direction: .forward, animated: false)
+        coordinator.pageViewController(pager, didFinishAnimating: true, previousViewControllers: [middle], transitionCompleted: true)
+        XCTAssertEqual(selected, outputs[2].id)
+        XCTAssertFalse(zoomed)
+    }
+
 }

@@ -80,6 +80,13 @@ is closed. All approved paired devices view the same server-wide output gallery.
 A valid active device credential is required to list weights, generate, view
 images, or remove them. Provider output URLs are never handed to the app.
 
+Gallery photos open full screen on iPhone and iPad. Pinch to zoom and pan;
+double-tap toggles 2×/fit. Swipe between photos when fitted. **View settings**
+shows the submission settings; **Run again** opens an editable composer using
+the server’s original photo and settings. Originals remain private on the server
+while their generated outputs remain. Older outputs restore known information
+and require selecting the original photo again.
+
 The gallery displays images in memory without saving local image files or using
 a disk URL cache. Tap an image for a larger view or to remove it from the server
 gallery for all devices. **Share** fetches a temporary JPG for the iOS share sheet;

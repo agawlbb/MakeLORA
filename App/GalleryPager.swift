@@ -21,7 +21,7 @@ struct GalleryPager: View {
     }
 }
 
-private struct GalleryPages: UIViewControllerRepresentable {
+struct GalleryPages: UIViewControllerRepresentable {
     let outputs: [GenerationOutput]
     @Binding var selectedID: String
     @Binding var zoomed: Bool
@@ -43,21 +43,27 @@ private struct GalleryPages: UIViewControllerRepresentable {
     }
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
         var parent: GalleryPages
+        private var displayedIDs: [String] = []
         weak var pager: UIPageViewController?
         init(_ parent: GalleryPages) { self.parent = parent }
         func page(_ output: GenerationOutput) -> GalleryImageController {
             GalleryImageController(output: output, load: parent.load) { [weak self] zoomed in
                 guard let self, (self.pager?.viewControllers?.first as? GalleryImageController)?.output.id == output.id else { return }
-                self.parent.zoomed = zoomed
                 self.setPagingEnabled(!zoomed)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, (self.pager?.viewControllers?.first as? GalleryImageController)?.output.id == output.id else { return }
+                    if self.parent.zoomed != zoomed { self.parent.zoomed = zoomed }
+                }
             }
         }
         func setPagingEnabled(_ enabled: Bool) {
             pager?.view.subviews.compactMap { $0 as? UIScrollView }.forEach { $0.isScrollEnabled = enabled }
         }
         func selectCurrent() {
-            guard let output = parent.outputs.first(where: { $0.id == parent.selectedID }),
-                  (pager?.viewControllers?.first as? GalleryImageController)?.output.id != output.id else { return }
+            let ids = parent.outputs.map(\.id)
+            guard let output = parent.outputs.first(where: { $0.id == parent.selectedID }) else { return }
+            guard displayedIDs != ids || (pager?.viewControllers?.first as? GalleryImageController)?.output.id != output.id else { return }
+            displayedIDs = ids
             pager?.setViewControllers([page(output)], direction: .forward, animated: false)
         }
         func pageViewController(_ pageViewController: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
@@ -92,6 +98,7 @@ final class GalleryImageController: UIViewController, UIScrollViewDelegate {
     private let spinner = UIActivityIndicatorView(style: .large)
     private let retryButton = UIButton(type: .system)
     private var imageTask: Task<Void, Never>?
+    private var loadID: UUID?
     private var previousSize: CGSize = .zero
     private var observers: [NSObjectProtocol] = []
     init(output: GenerationOutput, load: @escaping (GenerationOutput) async throws -> Data, onZoom: @escaping (Bool) -> Void) {
@@ -149,9 +156,10 @@ final class GalleryImageController: UIViewController, UIScrollViewDelegate {
     private func loadImage() {
         guard imageView.image == nil, imageTask == nil else { return }
         spinner.startAnimating(); retryButton.isHidden = true
+        let id = UUID(); loadID = id
         imageTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.imageTask = nil; self.spinner.stopAnimating() }
+            defer { if self.loadID == id { self.imageTask = nil; self.spinner.stopAnimating() } }
             do {
                 let data = try await self.load(self.output)
                 try Task.checkCancellation()
@@ -179,7 +187,9 @@ final class GalleryImageController: UIViewController, UIScrollViewDelegate {
         scrollView.minimumZoomScale = fit
         scrollView.maximumZoomScale = fit * 6
         scrollView.zoomScale = fit
-        centerImage(); onZoom(false)
+        centerImage()
+        scrollView.setContentOffset(CGPoint(x: -scrollView.contentInset.left, y: -scrollView.contentInset.top), animated: false)
+        onZoom(false)
     }
     private func centerImage() {
         scrollView.contentInset = UIEdgeInsets(top: max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2), left: max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2), bottom: 0, right: 0)

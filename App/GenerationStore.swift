@@ -64,7 +64,9 @@ private struct Prediction: Decodable {
     let error: String?
     let retryAfter: Int?
 }
+enum GenerationSubmissionOutcome { case submitted, failed, sourceUnavailable }
 private struct GenerationServiceError: Decodable, LocalizedError {
+    var httpStatus: Int? = nil
     let error: String
     let retryAfter: Int?
     let jobID: String?
@@ -243,7 +245,7 @@ private struct GenerationServiceError: Decodable, LocalizedError {
         }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            if let serviceError = try? JSONDecoder().decode(GenerationServiceError.self, from: data) { throw serviceError }
+            if var serviceError = try? JSONDecoder().decode(GenerationServiceError.self, from: data) { serviceError.httpStatus = (response as? HTTPURLResponse)?.statusCode; throw serviceError }
             throw NSError(domain: "Generation", code: (response as? HTTPURLResponse)?.statusCode ?? 0,
                 userInfo: [NSLocalizedDescriptionKey: "The server could not complete this request. Check the connection and retry."])
         }
@@ -262,8 +264,8 @@ private struct GenerationServiceError: Decodable, LocalizedError {
             await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
-    func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil) async {
-        guard !busy else { return }
+    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil) async -> GenerationSubmissionOutcome {
+        guard !busy else { return .failed }
         activeCredential = credential
         busy = true; error = nil
         localJob = GenerationJob(id: "submission-" + UUID().uuidString, model: model.displayName, prompt: prompt, status: "submitting", latestStatus: "Submitting…")
@@ -279,6 +281,7 @@ private struct GenerationServiceError: Decodable, LocalizedError {
             jobs.insert(GenerationJob(id: reply.id, model: model.displayName, prompt: prompt, status: reply.status, latestStatus: reply.latestStatus ?? reply.status.capitalized), at: 0)
             localJob = nil
             await refreshGallery()
+            return .submitted
         } catch {
             self.error = error.localizedDescription
             if let service = error as? GenerationServiceError, let id = service.jobID {
@@ -289,6 +292,11 @@ private struct GenerationServiceError: Decodable, LocalizedError {
                 localJob?.status = "unconfirmed"
                 localJob?.latestStatus = error.localizedDescription
             }
+            if sourceOutputID != nil, (error as? GenerationServiceError)?.httpStatus == 404 {
+                localJob = nil
+                return .sourceUnavailable
+            }
+            return .failed
         }
         // A failed status check or another active job never prevents a fresh submission.
     }

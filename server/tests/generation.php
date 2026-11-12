@@ -119,7 +119,7 @@ check(authenticatedDevice('Bearer '.str_repeat('a',64))['status']==='active','Va
 check(authenticatedDevice('Bearer '.str_repeat('b',64))['status']==='pending','Pending status available, feature access still blocked');
 $_SERVER['REQUEST_METHOD']='GET';
 $active=['id'=>'device-a','status'=>'active']; $other=['id'=>'device-b','status'=>'active'];
-foreach (['models','generate','prediction','gallery','output','remove_output','dismiss_generation'] as $action) {
+foreach (['models','generate','prediction','gallery','output','remove_output','dismiss_generation','cancel_retries','generation_details','generation_input'] as $action) {
     check(callAPI($action,['id'=>'pending','status'=>'pending'])->status===403,'Pending devices blocked for '.$action);
     check(callAPI($action,['id'=>'revoked','status'=>'revoked'])->status===403,'Inactive devices blocked for '.$action);
 }
@@ -134,6 +134,8 @@ try {
     file_put_contents($directory.'/replicate-token','test-token');
     $created=startGeneration(['model'=>str_repeat('a',64),'prompt'=>'Add glasses','image'=>'data:image/jpeg;base64,AAAA'],$active);
     $id=$created['id']; $transport=$GLOBALS['transport'];
+    check(isset($recipes[$id]) && is_file(recipeInputPath($id.'.jpg')),'One-shot submission saves replay before provider call');
+    check(!str_contains($recipes[$id]['settings_json'],'test-token'),'Replay metadata contains no provider token');
     check($transport->url==='https://api.replicate.com/v1/models/qwen/qwen-image-edit-plus-lora/predictions','Qwen endpoint');
     check(in_array('Authorization: Bearer test-token',$transport->options[CURLOPT_HTTPHEADER],true),'Server token used');
     $body=json_decode($transport->options[CURLOPT_POSTFIELDS],true);
@@ -247,6 +249,11 @@ try {
         check(str_contains($failure->getMessage(),'HTTP '.$code),'Provider status is actionable');
         check(!str_contains($failure->getMessage(),'test-token'),'Credential never exposed in errors');
     }
+    $calls=$providerCalls;$count=count($jobs);$failRecipeSave=true;
+    try { startGeneration(['model'=>str_repeat('a',64),'prompt'=>'Must not submit','image'=>'data:image/jpeg;base64,AAAA'],$active);throw new RuntimeException('Storage failure ignored'); }
+    catch (RuntimeException $error) { check($error->getMessage()==='Simulated original storage failure','Original persistence failure is surfaced'); }
+    finally { $failRecipeSave=false; }
+    check(count($jobs)===$count && $providerCalls===$calls,'No job or paid request survives failed original persistence');
     try { downloadOutput('https://internal.example/image.jpg',$directory.'/blocked'); throw new RuntimeException('Untrusted output allowed'); }
     catch (RuntimeException $error) { check($error->getMessage()==='Unexpected output URL.','Output download origin restricted'); }
     $_GET=['sha'=>str_repeat('a',64),'expires'=>(string)(time()-1),'signature'=>'bad'];

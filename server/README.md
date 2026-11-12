@@ -135,7 +135,8 @@ and credentials afterwards. No iOS build/release is part of a server deployment.
 For an existing installation, apply `migrations/004_generations.sql` if generation
 has never been installed, then `migrations/005_server_gallery.sql` and
 `migrations/006_generation_recovery.sql` and
-`migrations/007_generation_retries.sql` before deploying.
+`migrations/007_generation_retries.sql` and
+`migrations/008_generation_recipes.sql` before deploying.
 New installations use the updated `schema.sql` instead of replaying migrations.
 Migration 005 preserves older prediction IDs. PHP requires cURL and outbound
 HTTPS access to `api.replicate.com` and `*.replicate.delivery`. The existing saved
@@ -145,7 +146,9 @@ Active paired devices can:
 - GET `api.php?action=models` for the weight catalog.
 - POST `action=generate` with `model` (catalog SHA-256), `image` (JPEG data URI),
   `prompt`, `aspect_ratio`, `lora_scale`, optional integer `seed`, and optional
-  boolean `retry_offline` (omitted means one-shot).
+  boolean `retry_offline` (omitted means one-shot). Instead of `image`, send
+  `source_output_id` to reuse that output’s retained original; supplying both
+  is rejected. All model/settings validation still applies.
 - GET `action=prediction&id=...` to poll a server job, including a job started by
   another approved device.
 - GET `action=gallery` to list the shared server gallery. Pages contain up to 100
@@ -153,6 +156,10 @@ Active paired devices can:
   The first page also includes up to 100 newest unfinished/failed jobs in `jobs`,
   with a single `latestStatus` message and no log history. Prediction polling
   updates that message; successful archival replaces the job tile with images.
+- GET `action=generation_details&id=...` for an output’s immutable submitted
+  settings, available original flag, and resolved seed when provided. Legacy
+  outputs explicitly report missing data.
+- GET `action=generation_input&id=...` for its original input JPG in memory.
 - GET `action=output&id=...` to view a private archived JPG.
 - POST `action=remove_output&id=...` to remove an image for every device.
 - POST `action=cancel_retries&id=...` to stop future submission attempts. An
@@ -219,7 +226,7 @@ attempts. Revoking the submitting device also prevents further submissions.
 
 The server privately retains validated input image/prompt/settings under
 `private_session_directory/retry-inputs` (directory 0700, files 0600). It removes
-active copies after confirmed acceptance, cancellation or expiry. The worker
+retry-payload copies after confirmed acceptance, cancellation or expiry. The worker
 cleans expired crash leftovers; existing backups follow their normal retention.
 Each attempt creates fresh signed weight/callback URLs and uses the saved
 server token. An uncertain submission is reconciled against provider history
@@ -240,6 +247,38 @@ pass every minute. No device connection is needed. Inspect with
 `journalctl -u makelora-generation-retries.service`. Disabling the timer pauses
 background processing; queued work remains stored. The CLI `--check` validates
 setup without processing jobs or contacting Replicate.
+
+### Gallery viewing and rerunning
+
+The app opens gallery photos full screen, fitting the available iPad/iPhone
+viewport. Pinch/pan supports up to 6× fitted size; double-tap toggles 2×/fit.
+Swipe between gallery images while fitted. Below the photo, **View settings**
+shows the immutable submission snapshot and **Run again** opens an editable
+composer with its original photo and settings. Blank submitted seeds remain
+blank (random); a provider-resolved seed is shown separately.
+
+Migration 008 adds `makelora_generation_recipes`. Every new submission saves
+its validated original under `private_session_directory/generation-inputs`
+(directory 0700, JPG files 0600), independently from temporary retry payloads.
+Settings preserve catalog SHA, display name/base, prompt, aspect ratio, scale,
+submitted seed, output format, safety and retry settings. No tokens or signed
+URLs are stored in recipes or returned in details.
+
+All approved devices share these originals under the same pairing authentication
+and no-store policy as outputs. The app retains preview bytes in memory only;
+replay sends a source reference unless the user chooses a replacement image.
+Deleting the last output removes the original after active work has finished.
+Failed requests without outputs and crash leftovers are cleaned after 12 hours
+by the existing retry worker. Include originals and recipes in the existing
+private-data/SQL backup inventory; historical backups follow normal retention.
+Older outputs cannot recover unsaved photos/settings: the composer restores the
+known prompt, matches a model only by unique saved name, and explicitly requires
+a photo with defaults for unavailable fields. New recipes always use exact SHA.
+Missing/unsupported models require choosing an available supported weight.
+
+Deploy migration 008 and server code before releasing the new app. Existing
+clients remain compatible. The worker `--check` verifies the new table/storage;
+no worker schedule change is necessary.
 
 ### Server archival
 
@@ -279,6 +318,7 @@ php -n server/tests/weight_download.php
 php -n server/tests/retry_queue.php
 php server/tests/gallery_schema.php
 php server/tests/retry_schema.php
+php server/tests/recipes_schema.php
 ```
 
 The fake-provider suites use no network or paid requests and cover retry timing,

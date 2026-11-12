@@ -192,6 +192,7 @@ struct GenerationComposer: View {
                     if draft != nil {
                         Picker("Model", selection: $modelID) {
                             Text("Choose a model").tag("")
+                            if let model, !model.supported { Text("\(model.displayName) (unsupported)").tag(model.id).disabled(true) }
                             ForEach(store.models.filter(\.supported)) { Text($0.displayName).tag($0.id) }
                         }
                         if model == nil || model?.supported == false {
@@ -199,12 +200,12 @@ struct GenerationComposer: View {
                         }
                     }
                     if let model {
-                    Text(model.displayName).font(.headline)
-                    LabeledContent("Base model", value: model.baseModel ?? "Unspecified")
-                    LabeledContent("Weight size", value: ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file))
-                    DisclosureGroup("Additional information") { Text(model.details).font(.caption.monospaced()).textSelection(.enabled) }
-                    if !model.supported { Text("Generation currently supports Qwen Image Edit 2509 weights. Set the correct base model on the server.").foregroundStyle(.secondary) }
-                    if !useModel { Button("Use model to generate") { useModel = true }.disabled(!model.supported) }
+                        Text(model.displayName).font(.headline)
+                        LabeledContent("Base model", value: model.baseModel ?? "Unspecified")
+                        LabeledContent("Weight size", value: ByteCountFormatter.string(fromByteCount: model.sizeBytes, countStyle: .file))
+                        DisclosureGroup("Additional information") { Text(model.details).font(.caption.monospaced()).textSelection(.enabled) }
+                        if !model.supported { Text("Generation currently supports Qwen Image Edit 2509 weights. Set the correct base model on the server.").foregroundStyle(.secondary) }
+                        if !useModel { Button("Use model to generate") { useModel = true }.disabled(!model.supported) }
                     }
                     if draft?.details.legacy == true {
                         Text("Original settings were not saved. The prompt is restored; other settings use app defaults. Choose the original photo to continue.").foregroundStyle(.secondary)
@@ -215,6 +216,7 @@ struct GenerationComposer: View {
                         if let image, let preview = UIImage(data: image) { Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240) }
                         PhotosPicker("Choose from Photos", selection: $photo, matching: .images)
                         Button("Choose from Files") { files = true }
+                        Text("The original photo is kept privately on the server while its generated images remain in the gallery.").font(.caption).foregroundStyle(.secondary)
                         if importing { ProgressView("Preparing image…") }
                         if let importError { Text(importError).foregroundStyle(.red) }
                     }
@@ -236,8 +238,18 @@ struct GenerationComposer: View {
                     }
                     Button("Generate image", systemImage: "sparkles") {
                         guard let credential = pairing.credential, let image, let model, model.supported else { return }
-                        Task { await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID) }
-                        dismiss()
+                        Task {
+                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID)
+                            switch result {
+                            case .submitted: dismiss()
+                            case .sourceUnavailable:
+                                self.image = nil; sourceOutputID = nil
+                                importError = "The original photo was removed. Choose a photo to continue."
+                                store.error = nil
+                            case .failed:
+                                importError = store.error; store.error = nil
+                            }
+                        }
                     }.disabled(image == nil || importing || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy || pairing.credential == nil || model?.supported != true)
                 }
             }

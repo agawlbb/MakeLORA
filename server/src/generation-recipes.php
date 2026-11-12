@@ -75,7 +75,7 @@ function cleanRecipeInputLocked(array $job,bool $lastOutputRemoved=false): ?stri
 }
 function purgeUnusedRecipeInputs(): void {
     global $db;
-    $rows=query('SELECT generation_id FROM makelora_generation_recipes WHERE input_key IS NOT NULL AND created_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 12 HOUR)')->fetchAll();
+    $rows=query("SELECT r.generation_id FROM makelora_generation_recipes r JOIN makelora_generations g ON g.id=r.generation_id WHERE r.input_key IS NOT NULL AND r.created_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 12 HOUR) AND g.status NOT IN ('starting','processing','retry_submitting','retry_scheduled','retry_paused') AND NOT EXISTS (SELECT 1 FROM makelora_outputs o WHERE o.generation_id=g.id AND o.deleted_at IS NULL)")->fetchAll();
     foreach ($rows as $row) {
         $db->beginTransaction();
         try {
@@ -86,11 +86,13 @@ function purgeUnusedRecipeInputs(): void {
         } catch (Throwable $error) { if ($db->inTransaction()) $db->rollBack();throw $error; }
     }
     // A crash before inserting the recipe can leave an unreferenced private image.
+    $known=[];
+    foreach (query('SELECT input_key FROM makelora_generation_recipes WHERE input_key IS NOT NULL')->fetchAll() as $row) $known[$row['input_key']]=true;
     foreach (new DirectoryIterator(recipeDirectory()) as $file) {
         if (!$file->isFile() || $file->isLink() || $file->getMTime()>time()-GENERATION_RETRY_WINDOW) continue;
         $key=$file->getFilename();
         if (str_starts_with($key,'.input-')) { unlink($file->getPathname());continue; }
         if (!preg_match('/^[a-f0-9]{64}\.jpg$/D',$key)) continue;
-        if (!query('SELECT generation_id FROM makelora_generation_recipes WHERE input_key=?',[$key])->fetch()) unlink($file->getPathname());
+        if (!isset($known[$key])) unlink($file->getPathname());
     }
 }

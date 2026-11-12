@@ -22,6 +22,21 @@ private func generationAction(_ request: URLRequest) -> String {
     URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "action" }!.value!
 }
 
+private func generationBody(_ request: URLRequest) throws -> [String: Any] {
+    var body = request.httpBody ?? Data()
+    if body.isEmpty, let stream = request.httpBodyStream {
+        stream.open()
+        defer { stream.close() }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            body.append(contentsOf: buffer.prefix(count))
+        }
+    }
+    return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+}
+
 @MainActor final class GenerationRecoveryTests: XCTestCase {
     private let credential = DeviceCredential(server: URL(string: "https://fixture.invalid/MakeLORA")!, deviceID: "fixture-device", token: "fixture-token")
     private let model = GenerationModel(id: "fixture-model", displayName: "Fixture", baseModel: "Qwen/Qwen-Image-Edit-2509", sizeBytes: 1, details: "{}", supported: true)
@@ -131,20 +146,8 @@ private func generationAction(_ request: URLRequest) -> String {
             case "models": return (200, ["models": []])
             case "gallery": return (200, ["outputs": [], "jobs": rows])
             case "generate":
-                var body = request.httpBody ?? Data()
-                if body.isEmpty, let stream = request.httpBodyStream {
-                    stream.open()
-                    defer { stream.close() }
-                    var buffer = [UInt8](repeating: 0, count: 4096)
-                    while stream.hasBytesAvailable {
-                        let count = stream.read(&buffer, maxLength: buffer.count)
-                        if count <= 0 { break }
-                        body.append(contentsOf: buffer.prefix(count))
-                    }
-                }
-                if let value = try JSONSerialization.jsonObject(with: body) as? [String: Any] {
-                    optedIn = value["retry_offline"] as? Bool == true
-                }
+                let value = try generationBody(request)
+                optedIn = value["retry_offline"] as? Bool == true
                 rows = [["id": "queued-job", "model": "Fixture", "prompt": "Edit", "status": "retry_scheduled",
                          "latestStatus": "Retry scheduled", "retryEnabled": true, "canCancelRetries": true,
                          "retryCount": 0, "nextRetryAt": "2026-11-12T12:30:00Z", "retryUntil": "2026-11-13T00:00:00Z"]]
@@ -170,6 +173,67 @@ private func generationAction(_ request: URLRequest) -> String {
         XCTAssertTrue(stopped)
         XCTAssertEqual(store.galleryJobs.first?.status, "retry_canceled")
         XCTAssertEqual(store.galleryJobs.first?.canCancelRetries, false)
+    }
+
+    func testReplayLoadsSettingsAndReusesServerOriginalWithoutUploadingImage() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory); GenerationStubProtocol.handler = nil }
+        var submitted: [String: Any] = [:]
+        GenerationStubProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-token")
+            switch generationAction(request) {
+            case "models": return (200, ["models": []])
+            case "gallery": return (200, ["outputs": [], "jobs": []])
+            case "generation_details":
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "id" }?.value, "original-output")
+                return (200, ["legacy": false, "hasInput": true, "settings": ["modelID": "fixture-model", "modelName": "Fixture", "prompt": "Original prompt", "aspectRatio": "4:3", "loraScale": 0.75, "retryOffline": false]])
+            case "generate":
+                submitted = try generationBody(request)
+                return (200, ["id": "new-job", "status": "starting"])
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        let store = GenerationStore(directory: directory, session: session())
+        await store.load(credential)
+        let output = GenerationOutput(id: "original-output", model: "Fixture", prompt: "Original prompt", date: Date())
+        let details = try await store.generationDetails(output)
+        XCTAssertEqual(details.settings.aspectRatio, "4:3")
+        XCTAssertNil(details.settings.seed)
+        await store.generate(credential: credential, model: model, image: Data([1]), prompt: "Edited prompt", ratio: "4:3", scale: 0.75, seed: "", retryOffline: false, sourceOutputID: output.id)
+        XCTAssertEqual(submitted["source_output_id"] as? String, output.id)
+        XCTAssertNil(submitted["image"])
+        XCTAssertNil(submitted["seed"])
+        XCTAssertEqual(submitted["prompt"] as? String, "Edited prompt")
+        XCTAssertEqual(submitted["retry_offline"] as? Bool, false)
+        XCTAssertNil(store.error)
+    }
+
+    func testDeletedReplaySourceCanBeReplacedWithoutBlockingAnotherSubmission() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory); GenerationStubProtocol.handler = nil }
+        var submissions = 0
+        GenerationStubProtocol.handler = { request in
+            switch generationAction(request) {
+            case "models": return (200, ["models": []])
+            case "gallery": return (200, ["outputs": [], "jobs": []])
+            case "generate":
+                submissions += 1
+                let body = try generationBody(request)
+                if body["source_output_id"] != nil { return (404, ["error": "Original photo unavailable. Choose an input photo to run again."]) }
+                XCTAssertNotNil(body["image"])
+                return (200, ["id": "replacement-job", "status": "starting"])
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        let store = GenerationStore(directory: directory, session: session())
+        await store.load(credential)
+        let result = await store.generate(credential: credential, model: model, image: Data([1]), prompt: "Edit", ratio: "match_input_image", scale: 1, seed: "", sourceOutputID: "deleted-output")
+        if case .sourceUnavailable = result {} else { XCTFail("Deleted replay source must request a replacement photo") }
+        XCTAssertFalse(store.busy)
+        XCTAssertTrue(store.galleryJobs.isEmpty)
+        await submit(store)
+        XCTAssertEqual(submissions, 2)
+        XCTAssertNil(store.error)
     }
 
 }
