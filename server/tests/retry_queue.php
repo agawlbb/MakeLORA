@@ -83,11 +83,12 @@ function curl_exec(object $curl): string|bool {
     }
     if (isset($curl->options[CURLOPT_POST])) {
         $body=json_decode($curl->options[CURLOPT_POSTFIELDS],true);
-        $creates[]=$body;$curl->code=$createCode;
+        $creates[]=$body;$GLOBALS['createURLs'][]=$curl->url;$curl->code=$createCode;
         if ($createHook) { $hook=$createHook;$createHook=null;$hook($body); }
         if ($createCode>=300) return '{"detail":"simulated outage"}';
         $id='provider-'.count($creates);
-        return json_encode($predictions[$id]=['id'=>$id,'model'=>isset($body['version']) ? wanContract()['model']:QWEN_PROVIDER,'version'=>$body['version'] ?? null,'source'=>'api','webhook'=>$body['webhook'],'created_at'=>gmdate('c'),'status'=>$createState,'logs'=>'Working','output'=>$createState==='succeeded' ? ['https://replicate.delivery/result.jpg']:null]);
+        $wan=str_contains($curl->url,'/models/wavespeedai/');
+        return json_encode($predictions[$id]=['id'=>$id,'model'=>$wan ? wanContract()['model']:QWEN_PROVIDER,'version'=>$wan ? 'hidden':null,'source'=>'api','webhook'=>$body['webhook'],'created_at'=>gmdate('c'),'status'=>$createState,'logs'=>'Working','output'=>$createState==='succeeded' ? ['https://replicate.delivery/result.jpg']:null]);
     }
     $path=parse_url($curl->url,PHP_URL_PATH);
     if ($path==='/v1/predictions') {
@@ -105,7 +106,7 @@ $input=['model'=>str_repeat('a',64),'image'=>'data:image/jpeg;base64,AAAA','prom
 $device=['id'=>'fixture-device','status'=>'active'];
 function resetQueueFixture(): void {
     global $jobs,$attempts,$images,$creates,$predictions,$history,$deviceActive,$locked,$createCode,$createState,$historyCode,$badDownload,$createHook,$root;
-    $GLOBALS['recipes']=[];$jobs=[];$attempts=[];$images=[];$creates=[];$predictions=[];$history=['results'=>[],'next'=>null];$deviceActive=true;$locked=false;$createCode=503;$createState='starting';$historyCode=200;$badDownload=false;$createHook=null;
+    $GLOBALS['createURLs']=[];$GLOBALS['recipes']=[];$jobs=[];$attempts=[];$images=[];$creates=[];$predictions=[];$history=['results'=>[],'next'=>null];$deviceActive=true;$locked=false;$createCode=503;$createState='starting';$historyCode=200;$badDownload=false;$createHook=null;
     foreach (['retry-inputs','outputs','generation-inputs'] as $folder) foreach (glob($root.'/'.$folder.'/*') ?: [] as $path) unlink($path);
 }
 function forceDue(string $id): void {

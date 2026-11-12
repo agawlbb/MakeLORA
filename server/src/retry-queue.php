@@ -234,8 +234,9 @@ function reconcileRetryAttempt(array $job,array $attempt): ?array {
             $created=strtotime($candidate['created_at'] ?? '');
             if (!$created) throw new RuntimeException('Prediction history timestamp missing.');
             if ($created<$since) { $covered=true; continue; }
-            if (($candidate['model'] ?? '')!==($job['provider_model'] ?? QWEN_PROVIDER) || ($candidate['source'] ?? '')==='web') continue;
-            if (!empty($job['provider_version']) && ($candidate['version'] ?? '')!==$job['provider_version']) continue;
+            // Official models can report internal model names or a hidden execution
+            // version. Only the attempt-scoped callback identity proves acceptance.
+            if (($candidate['source'] ?? '')==='web') continue;
             if (retryWebhookMatches($candidate,$job,$attempt)) return provider('predictions/'.rawurlencode($candidate['id']));
             if (empty($candidate['webhook'])) {
                 if (++$inspected>25) throw new RuntimeException('Too many unidentified recent predictions.');

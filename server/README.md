@@ -342,10 +342,16 @@ release the app only after the server is updated. New installations use
 `schema.sql`. Migration 009 is idempotent and defaults old jobs/outputs to
 Qwen/JPEG. No production deployment is performed by development or tests.
 
-The adapter uses `wavespeedai/wan-2.1-i2v-480p`, pinned to version
-`f6644fcfc305f4f9e29e789f01f62dfa43d1775c22db64705a05d6bf85957366`.
-`src/contracts/wan-2.1-i2v-480p.json` records the verified input constraints and
-URI output shape from the versioned Replicate documentation. This version has
+The adapter uses the documented official-model endpoint
+`models/wavespeedai/wan-2.1-i2v-480p/predictions`. Replicate hides/aliases the
+execution version for this official model, so inference cannot be pinned using
+historical community-version URLs. `src/contracts/wan-2.1-i2v-480p.json` records
+verified input constraints, URI output shape and observed public schema ID
+`e2870aa4965fd9ddfd87c16a3c8ab952c18e745e63f3f3b123c2dc8b538ad2b5`.
+Recipes and jobs retain that schema ID as provenance, rather than claiming an
+immutable execution build. Retry reconciliation verifies the attempt-scoped
+callback secret, including predictions with internal model aliases or hidden
+versions; ambiguous history pauses resubmission. This version has
 no frame-count, FPS or duration inputs. Its ratios are `16:9`/`9:16` and its
 acceleration modes are `Off`/`Balanced`/`Fast`.
 

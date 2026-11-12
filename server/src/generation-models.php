@@ -69,7 +69,9 @@ function generationArguments(array $input,array $file,?array $job=null): array {
 function submitModelPrediction(array $file,array $args,array $callback,?array $job=null): array {
     $identity=$job ?? generationIdentity($file);
     if (($identity['model_family'] ?? 'qwen')==='wan') {
-        return provider('predictions',['version'=>$identity['provider_version'],'input'=>$args]+$callback);
+        // Official models expose stable input schemas but hide/alias execution versions.
+        // Use the documented model endpoint and retain the observed schema ID for replay.
+        return provider('models/'.($identity['provider_model'] ?? wanContract()['model']).'/predictions',['input'=>$args]+$callback);
     }
     return provider('models/'.QWEN_PROVIDER.'/predictions',['input'=>$args]+$callback);
 }

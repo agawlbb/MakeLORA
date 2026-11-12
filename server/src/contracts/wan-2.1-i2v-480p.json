@@ -1,23 +1,83 @@
 {
   "model": "wavespeedai/wan-2.1-i2v-480p",
-  "version": "f6644fcfc305f4f9e29e789f01f62dfa43d1775c22db64705a05d6bf85957366",
-  "source": "https://replicate.com/wavespeedai/wan-2.1-i2v-480p/versions/f6644fcfc305f4f9e29e789f01f62dfa43d1775c22db64705a05d6bf85957366/api",
+  "version": "e2870aa4965fd9ddfd87c16a3c8ab952c18e745e63f3f3b123c2dc8b538ad2b5",
+  "source": "https://replicate.com/wavespeedai/wan-2.1-i2v-480p/api/schema",
   "input": {
-    "type": "object", "required": ["prompt", "image"],
+    "type": "object",
+    "required": [
+      "prompt",
+      "image"
+    ],
     "properties": {
-      "image": {"type": "string", "format": "uri"},
-      "prompt": {"type": "string"},
-      "negative_prompt": {"type": "string", "default": ""},
-      "aspect_ratio": {"type": "string", "enum": ["16:9", "9:16"], "default": "16:9"},
-      "fast_mode": {"type": "string", "enum": ["Off", "Balanced", "Fast"], "default": "Balanced"},
-      "seed": {"type": "integer", "nullable": true},
-      "sample_guide_scale": {"type": "number", "minimum": 1, "maximum": 10, "default": 5},
-      "sample_steps": {"type": "integer", "minimum": 1, "maximum": 40, "default": 30},
-      "sample_shift": {"type": "integer", "minimum": 0, "maximum": 10, "default": 3},
-      "lora_weights": {"type": "string", "nullable": true},
-      "lora_scale": {"type": "number", "minimum": 0, "maximum": 4, "default": 1},
-      "disable_safety_checker": {"type": "boolean", "default": false}
+      "image": {
+        "type": "string",
+        "format": "uri"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "negative_prompt": {
+        "type": "string",
+        "default": ""
+      },
+      "aspect_ratio": {
+        "type": "string",
+        "enum": [
+          "16:9",
+          "9:16"
+        ],
+        "default": "16:9"
+      },
+      "fast_mode": {
+        "type": "string",
+        "enum": [
+          "Off",
+          "Balanced",
+          "Fast"
+        ],
+        "default": "Balanced"
+      },
+      "seed": {
+        "type": "integer",
+        "nullable": true
+      },
+      "sample_guide_scale": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": 10,
+        "default": 5
+      },
+      "sample_steps": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 40,
+        "default": 30
+      },
+      "sample_shift": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10,
+        "default": 3
+      },
+      "lora_weights": {
+        "type": "string",
+        "nullable": true
+      },
+      "lora_scale": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 4,
+        "default": 1
+      },
+      "disable_safety_checker": {
+        "type": "boolean",
+        "default": false
+      }
     }
   },
-  "output": {"type": "string", "format": "uri"}
+  "output": {
+    "type": "string",
+    "format": "uri"
+  },
+  "submission": "official-model"
 }

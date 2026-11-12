@@ -13,7 +13,7 @@ try {
     check($payload['negative_prompt']==='blur' && $payload['sample_steps']===20 && $payload['sample_shift']===4 && $payload['fast_mode']==='Fast' && $payload['_family']==='wan','Retry retains every video setting');
     $version=$jobs[$id]['provider_version'];
     $createCode=201;forceDue($id);processRetryJob($id);
-    check(count($creates)===2 && $creates[1]['version']===$version,'Headless retry uses the original pinned Wan version');
+    check(count($creates)===2 && $jobs[$id]['provider_version']===$version && !isset($creates[1]['version']) && str_ends_with($GLOBALS['createURLs'][1],'/models/'.wanContract()['model'].'/predictions'),'Headless retry preserves schema metadata and official-model routing');
     check($creates[1]['input']['aspect_ratio']==='9:16' && !isset($creates[1]['input']['lora_weights']),'Base retry maps settings without LoRA');
     check($jobs[$id]['provider_id']!==null && $jobs[$id]['retry_payload_key']===null,'Accepted video is polled, retained resubmission input removed');
     $accepted=count($creates);forceDue($id);processRetryJob($id);
@@ -26,9 +26,11 @@ try {
     check($creates[0]['input']['lora_scale']===0.6 && isset($creates[0]['input']['lora_weights']),'Wan LoRA submission uses weight transport');
     $attempt=latestRetryAttempt($customID);
     $candidate=$predictions[$jobs[$customID]['provider_id']];
+    $candidate['model']='replicate/wavespeed-wan-2.1-i2v-480p-internal-model';
+    $candidate['version']='hidden';
     $history=['results'=>[$candidate],'next'=>null];
-    check(reconcileRetryAttempt($jobs[$customID],$attempt)['id']===$candidate['id'],'Reconciliation recognizes Wan provider and version');
-    echo "Wan headless retry settings, pinned versions, base/LoRA transport, polling and reconciliation passed.\n";
+    check(reconcileRetryAttempt($jobs[$customID],$attempt)['id']===$candidate['id'],'Reconciliation binds the callback despite an internal alias and hidden version');
+    echo "Wan headless retry settings, official routing, base/LoRA transport, polling and reconciliation passed.\n";
 } finally {
     unset($fixtureBaseModel,$downloadBytes);
     foreach (['retry-inputs','outputs','generation-inputs'] as $folder) {

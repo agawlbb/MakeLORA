@@ -24,8 +24,8 @@ try {
     $prediction=['id'=>'wan-provider','status'=>'starting'];
     $created=startGeneration($input,['id'=>'device-a','status'=>'active']);$id=$created['id'];
     $body=json_decode($transport->options[CURLOPT_POSTFIELDS],true);
-    check($transport->url==='https://api.replicate.com/v1/predictions' && $body['version']===wanContract()['version'],'Wan requests pin the verified version');
-    check($jobs[$id]['model_family']==='wan' && $jobs[$id]['provider_version']===$body['version'],'Job stores family and provider version');
+    check($transport->url==='https://api.replicate.com/v1/models/'.wanContract()['model'].'/predictions' && !isset($body['version']),'Wan requests use the documented official-model endpoint');
+    check($jobs[$id]['model_family']==='wan' && $jobs[$id]['provider_version']===wanContract()['version'],'Job stores family and provider version');
     $settings=json_decode($recipes[$id]['settings_json'],true);
     check($settings['negativePrompt']==='blur' && $settings['fastMode']==='Off' && $settings['inferenceSteps']===12 && $settings['flowShift']===4 && $settings['guidanceScale']===6.5,'Replay retains all Wan settings');
     check($settings['outputFormat']==='mp4' && $settings['disableSafetyChecker']===false,'Replay retains video and safety settings');
@@ -49,7 +49,7 @@ try {
     catch (RuntimeException $e) { check($e->getMessage()==='Invalid output video.','Real ffprobe rejects corrupt media'); }
     unlink($bad);
     foreach ([[null,100,[0,99]],['bytes=0-9',100,[0,9]],['bytes=90-',100,[90,99]],['bytes=-5',100,[95,99]],['bytes=0-1000',100,[0,99]],['bytes=100-',100,false],['bytes=4-2',100,false],['bytes=-0',100,false],['bytes=0-1,4-5',100,false]] as [$header,$size,$expected]) check(outputByteRange($header,$size)===$expected,'Byte range '.$header);
-    echo "Wan version pinning, settings, base/LoRA mapping, replay, actual MP4 validation, archival, deletion and byte ranges passed.\n";
+    echo "Wan official-model routing, settings, base/LoRA mapping, replay, actual MP4 validation, archival, deletion and byte ranges passed.\n";
 } finally {
     unset($downloadBytes);
     foreach (['generation-inputs','outputs'] as $folder) {
