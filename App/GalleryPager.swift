@@ -196,7 +196,10 @@ final class GalleryImageController: UIViewController, UIScrollViewDelegate {
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
-        centerImage(); onZoom(scrollView.zoomScale > scrollView.minimumZoomScale * 1.01)
+        let zoomed = scrollView.zoomScale > scrollView.minimumZoomScale * 1.01
+        // At fit size, let the outer page view own horizontal drags; pinch remains enabled.
+        scrollView.panGestureRecognizer.isEnabled = zoomed
+        centerImage(); onZoom(zoomed)
     }
     @objc private func doubleTapped(_ gesture: UITapGestureRecognizer) {
         if scrollView.zoomScale > scrollView.minimumZoomScale * 1.01 { scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true); return }

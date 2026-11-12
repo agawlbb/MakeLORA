@@ -40,9 +40,11 @@ try {
     catch (RecipeReply $e) { check($e->status===400,'Conflicting sources rejected'); }
     query('UPDATE makelora_generation_recipes SET resolved_seed=? WHERE generation_id=?',[123,$id]);
     check(generationDetails($a)['resolvedSeed']===123 && generationDetails($a)['settings']['seed']===null,'Resolved seed does not replace submitted random choice');
+    $copy=job();saveGenerationRecipe($copy,$resolved,$file);$copiedOutput=output($copy);
     // Removing one output keeps the common original; final removal deletes it and preserves tombstones.
     removeOutput($a);check(is_file($path) && generationDetails($b)['hasInput'],'Shared original remains for surviving output');
     removeOutput($b);check(!is_file($path),'Last output removes original');
+    check(originalImageForOutput($copiedOutput)===$bytes,'Rerun owns an independent original when its source is removed');
     check((int)query('SELECT COUNT(*) FROM makelora_outputs WHERE generation_id=? AND deleted_at IS NOT NULL',[$id])->fetchColumn()===2,'Deletion tombstones preserved');
     try { originalImageForOutput($b);throw new RuntimeException('Deleted source read'); }
     catch (RecipeReply $e) { check($e->status===404,'Deleted sources cannot be reused'); }

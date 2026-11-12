@@ -58,10 +58,13 @@ import SwiftUI
         XCTAssertEqual(scroll.maximumZoomScale, scroll.minimumZoomScale * 6, accuracy: 0.001)
         scroll.setZoomScale(scroll.minimumZoomScale * 2, animated: false)
         XCTAssertTrue(zoomed)
+        XCTAssertTrue(scroll.panGestureRecognizer.isEnabled)
         controller.view.frame = CGRect(x: 0, y: 0, width: 1366, height: 650)
         controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
         XCTAssertEqual(scroll.zoomScale, scroll.minimumZoomScale, accuracy: 0.001)
         XCTAssertFalse(zoomed)
+        XCTAssertFalse(scroll.panGestureRecognizer.isEnabled)
+        XCTAssertTrue(scroll.pinchGestureRecognizer?.isEnabled == true)
         controller.viewDidDisappear(false)
     }
     func testPagingFollowsGalleryOrderAndStopsAtEnds() {
