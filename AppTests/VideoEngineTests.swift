@@ -53,13 +53,23 @@ final class VideoEngineTests: XCTestCase {
         XCTAssertEqual(size.width, 480); XCTAssertEqual(size.height, 854)
         let audio = try await output.loadTracks(withMediaType: .audio)
         XCTAssertTrue(audio.isEmpty)
+        // Decode before inspecting presentation timing. Compressed buffers include
+        // decode-order and container bookkeeping samples, not just displayed frames.
         let reader = try AVAssetReader(asset: output)
-        let samples = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        let samples = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         reader.add(samples); XCTAssertTrue(reader.startReading())
         var timestamps: [Double] = []
-        while let buffer = samples.copyNextSampleBuffer() { timestamps.append(CMSampleBufferGetPresentationTimeStamp(buffer).seconds) }
-        XCTAssertEqual(timestamps.count, 4)
-        for (actual, expected) in zip(timestamps, [0.0, 0.1, 0.3, 0.4]) { XCTAssertEqual(actual, expected, accuracy: 0.003) }
+        while let buffer = samples.copyNextSampleBuffer() {
+            if CMSampleBufferGetImageBuffer(buffer) != nil { timestamps.append(CMSampleBufferGetPresentationTimeStamp(buffer).seconds) }
+        }
+        XCTAssertEqual(reader.status, .completed)
+        // The frame already visible at 0.15 starts the clip. Later source frames
+        // at 0.3, 0.4, 0.6 and 0.7 retain their offsets from the chosen trim start.
+        let expectedTimes = [0.0, 0.15, 0.25, 0.45, 0.55]
+        XCTAssertEqual(timestamps.count, expectedTimes.count, "Decoded presentation times: \(timestamps)")
+        for (actual, expected) in zip(timestamps, expectedTimes) { XCTAssertEqual(actual, expected, accuracy: 0.003, "Decoded presentation times: \(timestamps)") }
+        let outputDuration = try await output.load(.duration)
+        XCTAssertEqual(outputDuration.seconds, 0.65, accuracy: 0.003)
         XCTAssertEqual(try Data(contentsOf: source), try Data(contentsOf: directory.appendingPathComponent("originals/\(video.filename)")))
         let generator = AVAssetImageGenerator(asset: output)
         let firstFrame = try await generator.image(at: .zero).image
