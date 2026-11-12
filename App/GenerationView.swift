@@ -214,8 +214,8 @@ struct GenerationComposer: View {
                 if useModel {
                     Section("Input image") {
                         if let image, let preview = UIImage(data: image) { Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240) }
-                        PhotosPicker("Choose from Photos", selection: $photo, matching: .images)
-                        Button("Choose from Files") { files = true }
+                        PhotosPicker("Choose from Photos", selection: $photo, matching: .images).disabled(importing || store.busy)
+                        Button("Choose from Files") { files = true }.disabled(importing || store.busy)
                         Text("The original photo is kept privately on the server while its generated images remain in the gallery.").font(.caption).foregroundStyle(.secondary)
                         if importing { ProgressView("Preparing image…") }
                         if let importError { Text(importError).foregroundStyle(.red) }
@@ -310,6 +310,7 @@ struct GenerationDetail: View {
     @State private var shareTask: Task<Void, Never>?
     @State private var detailError: String?
     @State private var remove = false
+    @State private var removalTarget: GenerationOutput?
     @State private var details: GenerationDetails?
     @State private var showingSettings = false
     @State private var loadingDetails = false
@@ -347,7 +348,7 @@ struct GenerationDetail: View {
                             catch { detailError = error.localizedDescription }
                         }
                     }.disabled(sharing || current == nil)
-                    Button("Remove", systemImage: "trash", role: .destructive) { remove = true }.disabled(current == nil)
+                    Button("Remove", systemImage: "trash", role: .destructive) { removalTarget = current; remove = true }.disabled(current == nil)
                 }
             }
         }
@@ -356,7 +357,7 @@ struct GenerationDetail: View {
             if let details { GenerationSettingsView(details: details) }
         }
         .sheet(item: $draft) { GenerationComposer(draft: $0, models: store.models) }
-        .onChange(of: selectedID) { _, _ in details = nil; zoomed = false }
+        .onChange(of: selectedID) { _, _ in details = nil; zoomed = false; remove = false; removalTarget = nil }
         .onChange(of: store.outputs.map(\.id)) { old, new in
             guard !new.contains(selectedID) else { return }
             guard !new.isEmpty else { dismiss(); return }
@@ -369,9 +370,10 @@ struct GenerationDetail: View {
             Button("OK") { detailError = nil }
         } message: { Text(detailError ?? "") }
         .confirmationDialog("Remove this image from the server gallery for all devices?", isPresented: $remove, titleVisibility: .visible) {
-            Button("Remove image", role: .destructive) {
-                guard let current else { return }
-                Task { if !(await store.remove(current)) { detailError = store.error; store.error = nil } }
+            if let removalTarget {
+                Button("Remove image", role: .destructive) {
+                    Task { if !(await store.remove(removalTarget)) { detailError = store.error; store.error = nil } }
+                }
             }
         }
     }
