@@ -1,6 +1,7 @@
 """Exercise Unix setgid publication as PHP UID 33 outside FileBrowser group 1000."""
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,6 +17,12 @@ class FolderPermissionTests(unittest.TestCase):
             root.chmod(0o755)
             private = root / 'private'; private.mkdir(); os.chown(private, 33, 33); private.chmod(0o700)
             exports = root / 'exports'; exports.mkdir(); os.chown(exports, 33, 1000); exports.chmod(0o2750)
+            # GitHub's checkout may be inside a private runner home. Copy only the
+            # source modules needed by this fixture instead of changing home permissions.
+            source = root / 'app/server/src'; source.mkdir(parents=True, mode=0o755)
+            for name in ['datasets.php', 'drive.php', 'dataset-folders.php', 'video-output.php', 'private-session.php']:
+                shutil.copyfile(ROOT / 'src' / name, source / name)
+                (source / name).chmod(0o644)
             fixture = root / 'check.php'
             fixture.write_text('''<?php
             $config=['private_session_directory'=>%s,'dataset_export_directory'=>%s];
@@ -27,7 +34,7 @@ class FolderPermissionTests(unittest.TestCase):
             $path=datasetFolderRoot().'/'.$name.'/1.txt';
             if (filegroup($path)!==1000 || (fileperms($path)&0777)!==0660) throw new RuntimeException('Published file is not readable by the FileBrowser group.');
             echo "Group inheritance and FileBrowser file permissions passed.\\n";
-            ''' % (json.dumps(str(private)), json.dumps(str(exports)), json.dumps(str(ROOT / 'src/datasets.php'))))
+            ''' % (json.dumps(str(private)), json.dumps(str(exports)), json.dumps(str(source / 'datasets.php'))))
             def php_user():
                 os.setgroups([])
                 os.setgid(33)
