@@ -21,6 +21,8 @@ struct ProjectSummary: Identifiable {
     private var exportTask: Task<URL, Error>?
     @Published private(set) var cancelRequested = false
     private var videoImportTask: Task<LibraryVideo, Error>?
+    private var filesImportTask: Task<Void, Never>?
+    private var videoImportID: UUID?
     private let root: URL
     private var generation: Task<Void, Never>?
     private var revision = 0
@@ -182,7 +184,7 @@ struct ProjectSummary: Identifiable {
             catch { guard revision == current else { return }; needsRetry = true; report("Update dataset files", error) }
         }
     }
-    func cancelWork() { cancelRequested = true; exportTask?.cancel(); videoImportTask?.cancel(); generation?.cancel() }
+    func cancelWork() { cancelRequested = true; exportTask?.cancel(); videoImportTask?.cancel(); filesImportTask?.cancel(); generation?.cancel() }
     func original(_ video: LibraryVideo) -> URL? { directory?.appendingPathComponent("originals/\(video.filename)") }
     func editSample(_ id: Int, _ edit: (inout VideoSample) -> Void) {
         update { value in if let i = value.samples.firstIndex(where: { $0.id == id }) { edit(&value.samples[i]) } }
@@ -202,9 +204,22 @@ struct ProjectSummary: Identifiable {
             defer { if access { url.stopAccessingSecurityScopedResource() } }
             do {
                 try Task.checkCancellation()
-                let task = Task { try await videoEngine.importVideo(url: url, name: url.lastPathComponent, directory: directory) }
+                let operationID = UUID()
+                videoImportID = operationID
+                let task = Task {
+                    try await videoEngine.importVideo(url: url, name: url.lastPathComponent, directory: directory) { phase in
+                        Task { @MainActor in
+                            guard self.videoImportID == operationID, !self.cancelRequested else { return }
+                            switch phase {
+                            case .waitingForFile: self.progress = 0; self.status = "Waiting for Files to provide \(url.lastPathComponent)…"
+                            case .copying(let fraction): self.progress = fraction ?? 0; self.status = "Copying \(url.lastPathComponent)…"
+                            case .readingVideo: self.progress = 0; self.status = "Reading video details…"
+                            }
+                        }
+                    }
+                }
                 videoImportTask = task
-                defer { videoImportTask = nil }
+                defer { videoImportTask = nil; videoImportID = nil }
                 let video = try await task.value
                 guard project?.id == id else { return }
                 update {
@@ -212,8 +227,40 @@ struct ProjectSummary: Identifiable {
                     $0.addSample(video: video, caption: captions[url.deletingPathExtension().lastPathComponent] ?? "")
                 }
             } catch is CancellationError { break }
-            catch { report("Import \(url.lastPathComponent)", error) }
+            catch {
+                if cancelRequested || Task.isCancelled { break }
+                report("Import \(url.lastPathComponent)", error)
+            }
         }
+    }
+    func importVideoFiles(_ urls: [URL]) async {
+        guard !busy, let projectID = project?.id else { return }
+        beginImport()
+        let task = Task {
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("MakeLORACaptions-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            do {
+                try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+                var captions: [String: String] = [:]
+                for url in urls where url.pathExtension.lowercased() == "txt" {
+                    try Task.checkCancellation()
+                    status = "Waiting for Files to provide \(url.lastPathComponent)…"
+                    let stem = url.deletingPathExtension().lastPathComponent
+                    guard captions[stem] == nil else { throw ProjectError.invalid("Multiple captions named \(stem).txt were selected. Import each set separately.") }
+                    let staged = temporary.appendingPathComponent(UUID().uuidString + ".txt")
+                    try await CoordinatedFileImport.copy(source: url, destination: staged, maximumBytes: 1_000_000)
+                    captions[stem] = try String(contentsOf: staged, encoding: .utf8)
+                }
+                try Task.checkCancellation()
+                guard self.project?.id == projectID else { return }
+                await importVideos(urls.filter { $0.pathExtension.lowercased() != "txt" }, captions: captions)
+            } catch is CancellationError { status = "Import canceled · edits saved" }
+            catch { report("Import videos from Files", error) }
+        }
+        filesImportTask = task
+        await task.value
+        filesImportTask = nil
+        busy = false
     }
     private func synchronize(_ value: Project, directory: URL, revision: Int) async throws {
         if value.model == .wan21I2V14B { try await videoEngine.synchronize(value, directory: directory, revision: revision) }

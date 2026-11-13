@@ -23,6 +23,7 @@ struct VideoWorkspaceView: View {
     @EnvironmentObject private var store: ProjectStore
     @State private var selected: Int?
     @State private var files = false
+    @State private var pendingFiles: VideoFileSelection?
     @State private var photos: [PhotosPickerItem] = []
     @State private var share: ExportItem?
     @State private var exportURL: URL?
@@ -74,23 +75,11 @@ struct VideoWorkspaceView: View {
             }
         }
         .sheet(item: $share, onDismiss: cleanupShare) { ShareSheet(url: $0.url) }
-        .fileImporter(isPresented: $files, allowedContentTypes: [.movie, .video, .plainText], allowsMultipleSelection: true) { result in
-            Task {
-                do {
-                    let urls = try result.get()
-                    var captions: [String: String] = [:]
-                    for url in urls where url.pathExtension.lowercased() == "txt" {
-                        let access = url.startAccessingSecurityScopedResource()
-                        defer { if access { url.stopAccessingSecurityScopedResource() } }
-                        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                        guard size <= 1_000_000 else { throw ProjectError.invalid("Caption files must be smaller than 1 MB.") }
-                        let stem = url.deletingPathExtension().lastPathComponent
-                        guard captions[stem] == nil else { throw ProjectError.invalid("Multiple captions named \(stem).txt were selected. Import each set separately.") }
-                        captions[stem] = try String(contentsOf: url, encoding: .utf8)
-                    }
-                    await store.importVideos(urls.filter { $0.pathExtension.lowercased() != "txt" }, captions: captions)
-                } catch { store.report("Import videos", error) }
-            }
+        .sheet(isPresented: $files, onDismiss: importSelectedFiles) {
+            VideoFilesPicker(onSelection: { urls in
+                pendingFiles = VideoFileSelection(urls: urls)
+                files = false
+            }, onCancel: { pendingFiles = nil; files = false })
         }
         .onChange(of: photos) { _, items in
             guard !items.isEmpty else { return }
@@ -115,6 +104,15 @@ struct VideoWorkspaceView: View {
         }
         .confirmationDialog("Delete this project and all its original videos?", isPresented: $delete, titleVisibility: .visible) { Button("Delete project", role: .destructive) { store.deleteProject() } }
         .onChange(of: project.samples.map(\.id)) { _, ids in if let selected, !ids.contains(selected) { self.selected = nil } }
+    }
+    private func importSelectedFiles() {
+        guard let selection = pendingFiles else { return }
+        pendingFiles = nil
+        Task {
+            // Keep security-scoped access alive until coordinated staging finishes.
+            await store.importVideoFiles(selection.urls)
+            withExtendedLifetime(selection) { }
+        }
     }
     private func cleanupShare() {
         if let exportURL { try? FileManager.default.removeItem(at: exportURL.deletingLastPathComponent()) }

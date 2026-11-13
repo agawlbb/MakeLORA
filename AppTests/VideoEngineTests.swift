@@ -115,4 +115,38 @@ final class VideoEngineTests: XCTestCase {
         try await engine.synchronize(project, directory: directory, revision: 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("dataset/1.mp4").path))
     }
+    @MainActor func testFilesBatchImportsVideoAndMatchingCaptionAndClearsBusyState() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("motion.mov"), caption = directory.appendingPathComponent("motion.txt")
+        try await fixture(at: source)
+        try Data("Move slowly".utf8).write(to: caption)
+        let store = ProjectStore(root: directory.appendingPathComponent("projects"))
+        store.create(name: "Files import", model: .wan21I2V14B)
+        defer { store.cancelWork() }
+        await store.importVideoFiles([source, caption])
+        XCTAssertFalse(store.busy)
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.project?.samples.first?.caption, "Move slowly")
+        let video = try XCTUnwrap(store.project?.videos.first)
+        let original = try XCTUnwrap(store.original(video))
+        XCTAssertEqual(try Data(contentsOf: original), try Data(contentsOf: source))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: original.deletingLastPathComponent().path).contains { $0.hasPrefix(".incoming-") })
+    }
+
+    @MainActor func testFailedFilesImportClearsBusyAndPreservesExistingProject() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProjectStore(root: directory.appendingPathComponent("projects"))
+        store.create(name: "Failed import", model: .wan21I2V14B)
+        defer { store.cancelWork() }
+        await store.importVideoFiles([directory.appendingPathComponent("unavailable.mov")])
+        XCTAssertFalse(store.busy)
+        XCTAssertNotNil(store.error)
+        XCTAssertTrue(store.project?.videos.isEmpty == true)
+        XCTAssertTrue(store.project?.samples.isEmpty == true)
+    }
+
 }

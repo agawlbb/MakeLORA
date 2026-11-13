@@ -9,28 +9,50 @@ actor VideoEngine {
     private var tail: Task<Void, Never>?
     private var revisions: [UUID: Int] = [:]
 
-    func importVideo(url: URL, name: String, directory: URL) async throws -> LibraryVideo {
-        let asset = AVURLAsset(url: url)
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw ProjectError.invalid("Choose a readable video.") }
-        let duration = try await asset.load(.duration).seconds
-        let size = try await track.load(.naturalSize)
-        let transform = try await track.load(.preferredTransform)
-        let oriented = CGRect(origin: .zero, size: size).applying(transform).standardized.size
-        guard duration.isFinite, duration > 0, oriented.width.isFinite, oriented.height.isFinite, oriented.width > 0, oriented.height > 0, oriented.width <= 30000, oriented.height <= 30000 else { throw ProjectError.invalid("This video has no readable frames.") }
-        let id = UUID(), filename = UUID().uuidString + "." + (url.pathExtension.isEmpty ? "mov" : url.pathExtension)
+    enum ImportProgress: Sendable { case waitingForFile, copying(Double?), readingVideo }
+
+    func importVideo(url: URL, name: String, directory: URL,
+                     progress: @escaping @Sendable (ImportProgress) -> Void = { _ in }) async throws -> LibraryVideo {
         let originals = directory.appendingPathComponent("originals", isDirectory: true)
         try FileManager.default.createDirectory(at: originals, withIntermediateDirectories: true)
-        let destination = originals.appendingPathComponent(filename)
-        do {
-            try Task.checkCancellation()
-            guard FileManager.default.createFile(atPath: destination.path, contents: nil) else { throw ProjectError.invalid("Cannot store the original video. Check device storage.") }
-            let input = try FileHandle(forReadingFrom: url), output = try FileHandle(forWritingTo: destination)
-            defer { try? input.close(); try? output.close() }
-            while let data = try input.read(upToCount: 1_048_576), !data.isEmpty {
-                try Task.checkCancellation(); try output.write(contentsOf: data)
+        let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+        let staging = originals.appendingPathComponent(".incoming-\(UUID().uuidString).\(ext)")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        progress(.waitingForFile)
+        try await CoordinatedFileImport.copy(source: url, destination: staging, progress: { progress(.copying($0)) })
+        try Task.checkCancellation()
+        progress(.readingVideo)
+        // AVFoundation must only inspect the app-owned copy, never a provider URL.
+        let metadata = try await Self.metadata(at: staging)
+        try Task.checkCancellation()
+        let filename = UUID().uuidString + "." + ext
+        try FileManager.default.moveItem(at: staging, to: originals.appendingPathComponent(filename))
+        return LibraryVideo(filename: filename, name: name, duration: metadata.duration, width: metadata.width, height: metadata.height)
+    }
+
+    private struct Metadata: Sendable { let duration: Double; let width: Int; let height: Int }
+    private static func metadata(at url: URL) async throws -> Metadata {
+        let asset = AVURLAsset(url: url)
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: Metadata.self) { group in
+                group.addTask {
+                    guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw ProjectError.invalid("Choose a readable video.") }
+                    let duration = try await asset.load(.duration).seconds
+                    let size = try await track.load(.naturalSize)
+                    let transform = try await track.load(.preferredTransform)
+                    let oriented = CGRect(origin: .zero, size: size).applying(transform).standardized.size
+                    guard duration.isFinite, duration > 0, oriented.width.isFinite, oriented.height.isFinite, oriented.width > 0, oriented.height > 0, oriented.width <= 30000, oriented.height <= 30000 else { throw ProjectError.invalid("This video has no readable frames.") }
+                    return Metadata(duration: duration, width: Int(oriented.width.rounded()), height: Int(oriented.height.rounded()))
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(30))
+                    asset.cancelLoading()
+                    throw ProjectError.invalid("The video details could not be read. Save a playable MP4 or MOV on this device and import it again.")
+                }
+                defer { group.cancelAll() }
+                return try await group.next()!
             }
-            return LibraryVideo(id: id, filename: filename, name: name, duration: duration, width: Int(oriented.width.rounded()), height: Int(oriented.height.rounded()))
-        } catch { try? FileManager.default.removeItem(at: destination); throw error }
+        } onCancel: { asset.cancelLoading() }
     }
 
     func waitUntilIdle() async { await tail?.value }

@@ -31,7 +31,13 @@ New projects choose **Qwen Image Edit 2509** or **Wan 2.1 Image-to-Video 14B**.
 Existing projects remain Qwen projects with the paired-image layout described above.
 Project model types are fixed at creation.
 
-Wan projects import videos from Photos or Files. Select matching UTF-8 `.txt`
+Wan projects import videos from Photos or Files. The video Files picker opens
+references in place and dismisses before MakeLORA copies them. Provider downloads
+and coordinated copies run off the UI thread with visible progress and Cancel;
+a provider that does not supply the file within two minutes reports an error.
+Video details are read from the local copy, with a separate 30-second limit.
+If a provider stalls, download the video to On My iPhone/iPad in Files and retry.
+Select matching UTF-8 `.txt`
 files alongside videos in Files to import captions by filename stem. Edit captions
 in the clip editor. Multiple clips can reuse one original video. Use playback,
 timeline trim handles or precise start/end times to trim; **Crop** adjusts the
