@@ -73,9 +73,9 @@ function datasetSigningKey(): string {
         return file_get_contents($path);
     });
 }
-function datasetMediaURL(string $project,string $video,string $kind,string $device): string {
+function datasetMediaURL(string $project,string $video,string $kind,string $device,int $version=0): string {
     global $config;
-    $params=['action'=>'dataset_media','project'=>$project,'video'=>$video,'kind'=>$kind,'device'=>$device,'expires'=>time()+3600];
+    $params=['action'=>'dataset_media','project'=>$project,'video'=>$video,'kind'=>$kind,'device'=>$device,'version'=>$version,'expires'=>time()+3600];
     $params['signature']=hash_hmac('sha256',implode('|',array_values($params)),datasetSigningKey());
     return rtrim($config['base_url'],'/').'/api.php?'.http_build_query($params);
 }
@@ -91,7 +91,7 @@ function datasetPublic(array $p,string $device): array {
         $videos[]=$video;
     }
     unset($p['exportDevice']);$p['videos']=$videos;$p['clips']=array_values($p['clips']);
-    $p['exportURL']=($p['exportStatus']==='ready' && ($p['exportRevision'] ?? -1)===$p['revision']) ? datasetMediaURL($p['id'],'','export',$device) : null;
+    $p['exportURL']=($p['exportStatus']==='ready' && ($p['exportRevision'] ?? -1)===$p['revision']) ? datasetMediaURL($p['id'],'','export',$device,$p['revision']) : null;
     return $p;
 }
 function datasetWorkerReady(): bool {
@@ -194,15 +194,15 @@ function datasetRemoveTree(string $path): void {
 function serveDatasetMedia(): never {
     try {
         $id=datasetID($_GET['project'] ?? null);$video=(string)($_GET['video'] ?? '');$kind=(string)($_GET['kind'] ?? '');$device=datasetID($_GET['device'] ?? null);
-        $expiry=(string)($_GET['expires'] ?? '');$signature=(string)($_GET['signature'] ?? '');
-        $expected=hash_hmac('sha256',implode('|',['dataset_media',$id,$video,$kind,$device,$expiry]),datasetSigningKey());
-        if (!ctype_digit($expiry) || (int)$expiry<time() || (int)$expiry>time()+3600 || !hash_equals($expected,$signature)) fail('Preview link expired. Reload the dataset.',401);
+        $version=(string)($_GET['version'] ?? '');$expiry=(string)($_GET['expires'] ?? '');$signature=(string)($_GET['signature'] ?? '');
+        $expected=hash_hmac('sha256',implode('|',['dataset_media',$id,$video,$kind,$device,$version,$expiry]),datasetSigningKey());
+        if (!ctype_digit($version) || !ctype_digit($expiry) || (int)$expiry<time() || (int)$expiry>time()+3600 || !hash_equals($expected,$signature)) fail('Preview link expired. Reload the dataset.',401);
         $active=query("SELECT id FROM makelora_devices WHERE id=? AND status='active'",[$device])->fetch();
         if (!$active) fail('Device access revoked.',401);
         $p=datasetRead($id);
         if ($kind==='export') {
-            if ($video!=='' || $p['exportStatus']!=='ready' || ($p['exportRevision'] ?? -1)!==$p['revision']) fail('Export is no longer current.',404);
-            $path=datasetPath($id).'/dataset.zip';$mime='application/zip';header('Content-Disposition: attachment; filename="dataset.zip"');
+            if ($video!=='' || (int)$version!==$p['revision'] || $p['exportStatus']!=='ready' || ($p['exportRevision'] ?? -1)!==$p['revision']) fail('Export is no longer current.',404);
+            $path=datasetPath($id).'/dataset-'.$p['exportRevision'].'.zip';$mime='application/zip';header('Content-Disposition: attachment; filename="dataset.zip"');
         } else {
             datasetID($video);
             if (($p['videos'][$video]['status'] ?? '')!=='ready') fail('Preview unavailable.',404);

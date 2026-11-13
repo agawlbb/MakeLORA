@@ -107,9 +107,11 @@ function datasetExportProject(string $id,array $p): void {
         if (!datasetDeviceActive($p['exportDevice'])) throw new RuntimeException('The exporting device was revoked.');
         datasetUpdate($id,static function(&$current) use ($p,$work,$directory) {
             if ($current['revision']!==$p['revision']) { $current['exportStatus']='none';$current['exportError']='Dataset changed during rendering. Export again to include the changes.';return; }
-            if (!rename($work.'/dataset.zip',$directory.'/dataset.zip')) throw new RuntimeException('Could not save the dataset ZIP.');
+            if (!rename($work.'/dataset.zip',$directory.'/dataset-'.$p['revision'].'.zip')) throw new RuntimeException('Could not save the dataset ZIP.');
             $current['exportStatus']='ready';$current['exportRevision']=$p['revision'];$current['exportError']=null;
         });
+        $current=datasetRead($id);
+        foreach (glob($directory.'/dataset-*.zip') ?: [] as $old) if ($old!==$directory.'/dataset-'.($current['exportRevision'] ?? -1).'.zip') unlink($old);
     } catch (Throwable $e) { datasetUpdate($id,static function(&$p) use ($e) { $p['exportStatus']='failed';$p['exportError']=$e instanceof RuntimeException ? $e->getMessage() : 'Dataset export failed. Check server video tools and retry.'; }); }
     finally { if (is_dir($work)) datasetRemoveTree($work); }
 }

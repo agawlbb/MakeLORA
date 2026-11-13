@@ -185,7 +185,7 @@ class DatasetTests(unittest.TestCase):
             self.assertEqual(reply.status, 416)
         params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
         params['expires'] = str(int(time.time()) - 1)
-        params['signature'] = hmac.new(SIGNING.encode(), '|'.join(params[k] for k in ['action', 'project', 'video', 'kind', 'device', 'expires']).encode(), hashlib.sha256).hexdigest()
+        params['signature'] = hmac.new(SIGNING.encode(), '|'.join(params[k] for k in ['action', 'project', 'video', 'kind', 'device', 'version', 'expires']).encode(), hashlib.sha256).hexdigest()
         with self.request(self.base + '/?' + urllib.parse.urlencode(params), auth=False) as reply:
             self.assertEqual(reply.status, 401)
         (self.root / 'revoked').touch()
@@ -225,6 +225,11 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(self.api('dataset_save', id=p['id'], body={'name': 'Edited again', 'revision': p['revision'], 'clips': [clip]})[0], 200)
         with self.request(p['exportURL'], auth=False) as reply:
             self.assertEqual(reply.status, 404, 'changed dataset must invalidate previous export URL')
+        self.api('dataset_export', id=p['id'], body={})
+        subprocess.run(['php', str(worker)], check=True, timeout=60)
+        self.assertEqual(self.api('dataset', id=p['id'])[1]['exportStatus'], 'ready')
+        with self.request(p['exportURL'], auth=False) as reply:
+            self.assertEqual(reply.status, 404, 'old export links must not gain access to a newly rendered revision')
 
     def test_delete_invalidates_preview_and_busy_delete_is_rejected(self):
         self.ready_source()
