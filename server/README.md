@@ -394,3 +394,128 @@ VM `.test-config` credentials only. Swift core tests cover old project loading,
 video references/trims and flat filenames; iOS tests cover conversion, source
 orientation, variable timestamps, cancellation and generation requests. Run iOS
 tests on macOS with the existing validation workflow; Linux has no Apple SDK.
+
+## Google Drive and server video datasets
+
+The app's **Datasets → Server datasets · Google Drive** keeps this workflow
+separate from existing offline projects. Active paired devices share the server
+library. Videos travel **Drive → server**, while the device streams only a 360p
+preview and eight timeline thumbnails. Trims, normalized crops and UTF-8 captions
+are metadata until an explicit **Render dataset on server** operation. Multiple
+clips reuse one retained original. ZIPs contain numbered `1.mp4`/`1.txt` pairs at
+the root, with the cropped shorter side resized to 480 even pixels, no audio and
+no separate control image. Numbers reflect the current clip order on each export.
+Server datasets are editable manifests, independent from local project formats.
+
+### Setup and deployment
+
+This feature requires server deployment and a new app release. No database
+migration is needed: atomically replaced JSON manifests live beside private
+video files under `private_session_directory/datasets`. Preserve this directory,
+`google-drive.json` and `dataset-signing-key` with the existing private backup
+inventory. They are not web-accessible. Do not create another backup job.
+
+1. Enable the Google Drive API in a dedicated Google Cloud project. Configure
+   an OAuth consent screen and a **Web application** OAuth client. Register the
+   exact redirect `https://vps.coffeybean.com/MakeLORA/drive.php` (or your configured
+   `base_url` plus `/drive.php`). Put `google_drive_client_id` and
+   `google_drive_client_secret` in the existing private settings file. Do not use
+   credentials belonging to another app, or put credentials in Git/the iOS app.
+2. Deploy code and the updated gateway allowlist (`drive.php`). Ensure FFmpeg,
+   ffprobe, PHP cURL/mbstring/zip and `proc_open` are available. PHP's user needs
+   the existing mode-0700 private storage directory. `ffmpeg_binary` and
+   `ffprobe_binary` default to `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`.
+3. Run `php server/bin/process-datasets.php --check` with the installation's
+   private `MAKELORA_CONFIG`. This only checks local prerequisites. Once deployment
+   is authorized, run `bash server/deploy/install-dataset-worker.sh` on the VM to
+   install/enable the dedicated systemd timer. No worker is activated by tests,
+   deployment packaging, or a device request. The existing generation retry
+   worker is unchanged. Disable the dataset timer to pause queued work.
+4. Open **Google Drive connection** on the authenticated server management page
+   (also linked from the app), sign in to Google and grant read-only offline
+   access. The OAuth state is single-use, browser-session-bound and expires in
+   ten minutes; code exchange uses PKCE. Tokens stay in mode-0600 private files.
+   The server refreshes access tokens without an open app. Disconnect removes
+   this installation's tokens; optionally revoke the grant in Google Account
+   settings too. Existing imported originals remain until their dataset is deleted.
+
+The account grants `drive.readonly` because an in-app folder browser must list
+existing videos throughout the account. The management page discloses this
+account-wide read access before consent. This is **not** a folder-scoped grant;
+use a dedicated Google account containing only intended training data if that
+boundary is required. All approved paired devices can browse this connected
+account and share imported datasets. This is the existing single-owner server
+permission model, not a multi-user service. Google may require OAuth verification
+for broader distribution; an external consent app in Testing can have expiring
+refresh tokens. Configure the consent audience/publishing status appropriately.
+See Google's [web-server OAuth documentation](https://developers.google.com/identity/protocols/oauth2/web-server)
+and [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+
+### Operation and limits
+
+Browse **My Drive** or **Shared with me**, open folders, select up to 100 videos
+across folders and import. Listings are paginated. The server downloads only
+selected videos and an optional identical-stem `.txt` sibling; duplicate matching
+captions or non-UTF-8 text fail clearly. Missing captions start blank. Drive
+shortcuts and Shared Drives without a browsable shared folder are not listed as
+special root entries; this first version does not offer a separate Shared Drives
+root chooser. Private files do not need public sharing links. Downloads use the
+[authorized Drive media API](https://developers.google.com/workspace/drive/api/guides/manage-downloads),
+not Google web-preview pages. Deleted or non-downloadable sources fail the queued
+import. A successful server copy remains usable if its Drive source later changes
+or disappears; it does not automatically sync subsequent Drive edits.
+
+Default original limit is 2 GiB (`dataset_video_limit_bytes`), total library budget
+50 GiB (`dataset_storage_limit_bytes`), up to 500 source entries and 500 clips per
+dataset. Inputs are limited to 30 minutes, 8192 pixels per dimension, 40 megapixels,
+and a maximum 16:1 display aspect ratio. MOV/MP4, Matroska/WebM and AVI containers
+are supported when FFmpeg can decode their video. Rotation and non-square pixels
+are normalized before cropping. Extremely small crops can fail encoding; errors
+remain visible and a wider crop can be exported again. The server reserves storage
+headroom before jobs; estimates are conservative but operators must still monitor
+actual disk usage. FFmpeg is limited to two encode threads, each process has a
+30-minute timeout, and imports have a 30-minute download timeout. ZIPs use the
+server's ZipArchive/ZIP64 support rather than the local app's 4-GiB ZIP limit.
+
+The single worker takes one queued import or export per pass. Its global file
+lock prevents duplicate work; a surviving `processing` state is restarted after a
+crash, without creating external inference jobs. Status and sanitized errors are
+stored in the manifest. Local originals are replaced when restarting an interrupted
+import; temporary render files are replaced on export retry. A failed import can
+be retried in the app. The app warns when the worker has no recent heartbeat and
+is not currently running. Delete a dataset after its active processing finishes to
+remove originals/previews/exports; queued work is removed with it. Drive originals
+are never modified. List/GET operations do not trigger processing.
+
+Playback URLs are HMAC-signed, scoped to one media item and one active device,
+expire in one hour, support GET/HEAD and single byte ranges, and are checked
+against device revocation on every request. They contain no device bearer token
+or Google credential. Treat these URLs as temporary credentials: keep query
+strings out of HTTP access logs. Reopen an editor/dataset to refresh an expired
+URL. **Share download link** intentionally shares access to that ZIP for one hour;
+it does not download the ZIP through the device. Dataset edits invalidate stale
+export URLs. Save uses a manifest revision and rejects concurrent overwrites;
+the clip editor merges unrelated changes when its own clip is unchanged. Export
+captures a revision and rejects its result if the dataset changes while rendering.
+
+Additional APIs (all active-device bearer authentication except signed media):
+`drive_status`, `drive_files` (`folder`, `page`), `datasets`, `dataset_create` (POST
+name), `dataset` (GET id), `dataset_import` (POST id, files), `dataset_save` (POST id,
+name, revision, clips), `dataset_export` (POST id), `dataset_delete` (POST id), and
+`dataset_media` (scoped signed GET/HEAD). No API returns original server paths or
+Google credentials. The `drive.php` browser route requires normal management
+sign-in and CSRF-protected connect/disconnect; a paired device cannot replace
+server Drive credentials.
+
+Development verification (no Google/Replicate requests):
+
+```sh
+dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 -m unittest server.tests.test_datasets -v'
+```
+
+Install FFmpeg inside development to run the real trim/crop/ZIP test. The HTTP
+suite checks active-device access, queue-only imports, duplicate prevention,
+invalid paths/trim/crop, revision conflicts, scoped playback, expiry/revocation,
+byte ranges/HEAD, deletion and stale export invalidation. Complete a live OAuth
+connection and one private Drive import after configuring the dedicated client;
+synthetic tests do not prove Google consent configuration or access to your files.

@@ -62,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix='makelora-production-test-') as temporar
         assert request()[0] == 302
         assert request(headers={'Remote-User': 'admin'})[0] == 302
         assert request('/MakeLORA/style.css')[0] == 302
+        assert request('/MakeLORA/drive.php')[0] == 302
         assert request('/MakeLORA/api.php?action=status')[0] == 401
         for path in ('settings.php', 'vendor/autoload.php', '../private/settings.php', 'gateway.php'):
             assert request('/MakeLORA/' + path)[0] == 404

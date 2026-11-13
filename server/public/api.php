@@ -5,6 +5,8 @@ require dirname(__DIR__).'/src/bootstrap.php';
 try {
     $action = $_GET['action'] ?? '';
     require_once dirname(__DIR__).'/src/generation.php';
+    require_once dirname(__DIR__).'/src/datasets.php';
+    if ($action==='dataset_media' && in_array($_SERVER['REQUEST_METHOD'],['GET','HEAD'],true)) serveDatasetMedia();
     if ($action==='generation_webhook' && $_SERVER['REQUEST_METHOD']==='POST') generationWebhook();
     if ($action==='weights' && in_array($_SERVER['REQUEST_METHOD'],['GET','HEAD'],true)) serveWeights();
     if ($action === 'redeem' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -35,6 +37,7 @@ try {
     if ($action==='disconnect' && $_SERVER['REQUEST_METHOD']==='POST') {
         query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[$row['id']]); jsonResponse(['status'=>'revoked']);
     }
+    if (str_starts_with($action,'dataset') || in_array($action,['drive_status','drive_files'],true)) datasetsAPI($action,$row);
     if (in_array($action,['models','generate','prediction','gallery','output','remove_output','dismiss_generation','cancel_retries','generation_details','generation_input'],true)) generationAPI($action,$row);
     fail('Unknown operation or method.',405);
 } catch (ProviderFailure $e) { $e->respond(); }

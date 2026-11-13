@@ -1,6 +1,6 @@
 # MakeLORA
 
-An iPhone and iPad app for preparing image and video training datasets offline, with optional server-backed generation. Requires iOS or iPadOS 17 or later. iPhones use portrait orientation; iPads support portrait and landscape. Portrait uses a full-width library and a separate pair editor, with stacked image cards on narrow displays. Landscape iPads use a two-pane workspace with side-by-side image comparisons.
+An iPhone and iPad app for preparing image and video training datasets offline, with optional server-backed video datasets and generation. Requires iOS or iPadOS 17 or later. iPhones use portrait orientation; iPads support portrait and landscape. Portrait uses a full-width library and a separate pair editor, with stacked image cards on narrow displays. Landscape iPads use a two-pane workspace with side-by-side image comparisons.
 
 Create a project and import photos from Photos or Files, including HEIC, JPEG and PNG. Choose a control (starting image) and a target (desired result), then describe the transformation. Photos can be reused in any number of pairs.
 
@@ -65,6 +65,25 @@ controls work as before. MP4 outputs appear in the shared server gallery with
 playback, sharing, removal, saved settings and **Run again**. Playback and sharing
 use protected temporary files that are removed afterward; gallery images remain
 in memory. See the server README for the required migration and `ffprobe` setup.
+
+## Server video datasets from Google Drive
+
+Open **Datasets → Server datasets · Google Drive** to create a Wan server dataset.
+Connect Google Drive through the server's authenticated website, then browse and
+select videos in the app. Originals download directly from Drive to the server;
+this avoids importing through the iOS Files provider. Matching same-name UTF-8
+TXT files in the same folder supply captions automatically.
+
+Once the preview is ready, stream it to trim, crop and caption clips. Multiple
+clips can reuse one server original. **Render dataset on server** creates a ZIP
+of matching numbered MP4/TXT files at 480p. **Share download link** lets a training
+server download that ZIP directly; the link grants access for one hour. Source
+videos, editable settings and rendered datasets remain on the server. This
+workflow needs a network connection and remains separate from offline projects.
+
+The server needs its own dedicated Google OAuth client and a background dataset
+worker. All approved devices share the connected Drive account and datasets.
+See [server setup and limits](server/README.md#google-drive-and-server-video-datasets).
 
 ## Development
 

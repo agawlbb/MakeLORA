@@ -48,6 +48,7 @@ $tokenNotice=$_SESSION['token_notice'] ?? null;
 unset($_SESSION['token_notice']);
 ?><!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>MakeLORA server</title><link rel="stylesheet" href="style.css"><main>
 <h1>MakeLORA</h1>
+<p><a href="drive.php">Google Drive connection</a></p>
 <section aria-labelledby="replicate-heading">
 <h2 id="replicate-heading">Replicate API token</h2>
 <?php if ($tokenNotice): ?><p role="status"><?=escape($tokenNotice)?></p><?php endif ?>

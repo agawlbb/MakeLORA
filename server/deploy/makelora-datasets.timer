@@ -1,0 +1,10 @@
+[Unit]
+Description=Process queued MakeLORA datasets
+
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=10
+Unit=makelora-datasets.service
+
+[Install]
+WantedBy=timers.target

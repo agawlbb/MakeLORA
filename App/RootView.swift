@@ -18,6 +18,7 @@ struct DatasetView: View {
     @EnvironmentObject private var store: ProjectStore
     @Environment(\.scenePhase) private var phase
     @State private var serverSettings = false
+    @State private var serverDatasets = false
     @State private var newProject = false
     @State private var projectName = ""
     @State private var datasetModel = DatasetModel.qwenImageEdit2509
@@ -35,6 +36,7 @@ struct DatasetView: View {
                                 Text("A starting point.\nA different possibility.").font(.system(size: 42, weight: .semibold, design: .rounded))
                                 Text("Prepare image and video datasets for your model.").foregroundStyle(.secondary)
                             }.padding(.vertical, 20)
+                            Button("Server datasets · Google Drive", systemImage: "server.rack") { serverDatasets = true }.buttonStyle(.borderedProminent).foregroundStyle(.black)
                             if store.projects.isEmpty {
                                 ContentUnavailableView("Your first dataset starts here", systemImage: "rectangle.stack.badge.plus", description: Text("Choose a training model, then import images or videos."))
                             }
@@ -59,6 +61,7 @@ struct DatasetView: View {
         }
         .tint(accent)
         .sheet(isPresented: $serverSettings) { ServerView() }
+        .fullScreenCover(isPresented: $serverDatasets) { ServerDatasetsView() }
         .disabled(store.busy)
         .overlay { if store.busy {
             VStack(spacing: 12) { ProgressView(store.status); if store.progress > 0 { ProgressView(value: store.progress) }; Button("Cancel") { store.cancelWork() } }

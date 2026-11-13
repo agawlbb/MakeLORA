@@ -1,0 +1,10 @@
+[Unit]
+Description=Process one MakeLORA Drive import or dataset export
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec --user 33:33 -e MAKELORA_CONFIG=/run/site-private/makelora/settings.php shared-frontend-web-1 php /run/site-private/makelora/app/bin/process-datasets.php
+TimeoutStartSec=21600
+NoNewPrivileges=true
