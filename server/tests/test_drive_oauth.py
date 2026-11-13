@@ -72,6 +72,7 @@ class DriveOAuthTests(unittest.TestCase):
         self.assertEqual(status, 403)
         status, headers, _ = self.request(body={'action': 'connect', 'csrf': csrf}, cookie=cookie)
         self.assertEqual(status, 303)
+        self.assertIn("form-action 'self' https://accounts.google.com", headers['Content-Security-Policy'])
         auth = urlsplit(headers['Location'])
         self.assertEqual(auth.netloc, 'accounts.google.com')
         params = parse_qs(auth.query)

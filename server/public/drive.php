@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require dirname(__DIR__).'/src/bootstrap.php';
+// Permit the consent redirect after our CSRF-protected POST, without widening other pages.
+header("Content-Security-Policy: default-src 'none'; style-src 'self'; form-action 'self' https://accounts.google.com; frame-ancestors 'none'; base-uri 'none'");
 require dirname(__DIR__).'/src/drive.php';
 try {
     driveRoot();
