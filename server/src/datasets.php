@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__.'/drive.php';
 require_once __DIR__.'/video-output.php';
+require_once __DIR__.'/dataset-folders.php';
 
 function datasetRoot(): string {
     $root=driveRoot().'/datasets';
@@ -91,7 +92,10 @@ function datasetPublic(array $p,string $device): array {
         $videos[]=$video;
     }
     unset($p['exportDevice']);$p['videos']=$videos;$p['clips']=array_values($p['clips']);
-    $p['exportURL']=($p['exportStatus']==='ready' && ($p['exportRevision'] ?? -1)===$p['revision']) ? datasetMediaURL($p['id'],'','export',$device,$p['revision']) : null;
+    $p['exportDestination']=datasetFolderConfigured() ? 'filebrowser' : 'zip';
+    $p['exportFolder']=($p['exportStatus']==='ready' && ($p['exportRevision'] ?? -1)===$p['revision'] && ($p['exportFormat'] ?? 'zip')==='folder' && isset($p['exportFolderName'])) ? datasetFolderLabel().' / '.$p['exportFolderName'] : null;
+    unset($p['exportFolderName']);
+    $p['exportURL']=(($p['exportFormat'] ?? 'zip')==='zip' && $p['exportStatus']==='ready' && ($p['exportRevision'] ?? -1)===$p['revision']) ? datasetMediaURL($p['id'],'','export',$device,$p['revision']) : null;
     return $p;
 }
 function datasetWorkerReady(): bool {
@@ -169,10 +173,13 @@ function datasetsAPI(string $action,array $device): never {
             jsonResponse(datasetPublic($p,$device['id']));
         }
         if ($action==='dataset_export' && $method==='POST') {
-            $p=datasetUpdate($id,static function(&$p) use ($device) {
+            $body=datasetBody();$format=$body['format'] ?? datasetExportFormat();
+            if (!in_array($format,['folder','zip'],true)) throw new InvalidArgumentException('Choose a folder or ZIP export.');
+            if ($format==='folder') datasetFolderRoot();
+            $p=datasetUpdate($id,static function(&$p) use ($device,$format) {
                 if (!$p['clips']) throw new InvalidArgumentException('Add at least one clip.');
                 if (in_array($p['exportStatus'],['queued','processing'],true)) return;
-                $p['exportStatus']='queued';$p['exportDevice']=$device['id'];$p['exportError']=null;
+                $p['exportStatus']='queued';$p['exportDevice']=$device['id'];$p['exportError']=null;$p['exportFormat']=$format;
             });jsonResponse(datasetPublic($p,$device['id']),202);
         }
         if ($action==='dataset_delete' && $method==='POST') {
@@ -201,7 +208,7 @@ function serveDatasetMedia(): never {
         if (!$active) fail('Device access revoked.',401);
         $p=datasetRead($id);
         if ($kind==='export') {
-            if ($video!=='' || (int)$version!==$p['revision'] || $p['exportStatus']!=='ready' || ($p['exportRevision'] ?? -1)!==$p['revision']) fail('Export is no longer current.',404);
+            if (($p['exportFormat'] ?? 'zip')!=='zip' || $video!=='' || (int)$version!==$p['revision'] || $p['exportStatus']!=='ready' || ($p['exportRevision'] ?? -1)!==$p['revision']) fail('Export is no longer current.',404);
             $path=datasetPath($id).'/dataset-'.$p['exportRevision'].'.zip';$mime='application/zip';header('Content-Disposition: attachment; filename="dataset.zip"');
         } else {
             datasetID($video);

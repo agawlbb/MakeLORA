@@ -75,9 +75,9 @@ this avoids importing through the iOS Files provider. Matching same-name UTF-8
 TXT files in the same folder supply captions automatically.
 
 Once the preview is ready, stream it to trim, crop and caption clips. Multiple
-clips can reuse one server original. **Render dataset on server** creates a ZIP
-of matching numbered MP4/TXT files at 480p. **Share download link** lets a training
-server download that ZIP directly; the link grants access for one hour. Source
+clips can reuse one server original. **Export to FileBrowser Quantum** creates a folder of matching numbered MP4/TXT
+files at 480p, directly in the server’s configured FileBrowser storage. The app
+shows the destination when copying finishes; no device download or ZIP is needed. Source
 videos, editable settings and rendered datasets remain on the server. This
 workflow needs a network connection and remains separate from offline projects.
 

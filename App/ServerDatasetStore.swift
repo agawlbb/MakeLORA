@@ -16,6 +16,8 @@ struct ServerDataset: Decodable, Identifiable {
     let exportStatus: String
     let exportError: String?
     let exportURL: URL?
+    var exportFolder: String? = nil
+    var exportDestination: String? = nil
     var processing: Bool { videos.contains { ["queued", "processing"].contains($0.status) } || ["queued", "processing"].contains(exportStatus) }
 }
 struct ServerDatasetVideo: Decodable, Identifiable {
@@ -173,7 +175,7 @@ private struct DatasetServiceError: Decodable, LocalizedError {
     }
     func export() async throws {
         guard let project else { return }
-        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: [:]))
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: ["format": "folder"]))
     }
     func removeVideo(_ id: String) async throws {
         guard let project else { return }

@@ -47,7 +47,8 @@ function datasetEncode(string $source,string $output,float $start,float $duratio
 }
 function datasetStorageCheck(int $extra): void {
     global $config;$root=datasetRoot();$size=0;$limit=(int)($config['dataset_storage_limit_bytes'] ?? 50*1024*1024*1024);
-    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root,FilesystemIterator::SKIP_DOTS)) as $file) if ($file->isFile()) $size+=$file->getSize();
+    $roots=[$root];if (datasetFolderConfigured()) $roots[]=datasetFolderRoot();
+    foreach ($roots as $directory) foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory,FilesystemIterator::SKIP_DOTS)) as $file) if ($file->isFile() && !$file->isLink()) $size+=$file->getSize();
     $free=disk_free_space($root);
     if ($extra<0 || $size+$extra>$limit || $free===false || $free<$extra+1024*1024*1024) throw new RuntimeException('Server dataset storage is full. Remove unused datasets or increase its storage limit.');
 }
@@ -86,34 +87,49 @@ function datasetImportVideo(string $project,string $id,array $video): void {
     }
 }
 function datasetExportProject(string $id,array $p): void {
-    $directory=datasetPath($id);$work=$directory.'/render';
+    $directory=datasetPath($id);$work=$directory.'/render';$stage=null;$zip=null;
+    $folder=($p['exportFormat'] ?? 'zip')==='folder';
     try {
         if (!datasetDeviceActive($p['exportDevice'])) throw new RuntimeException('The exporting device was revoked. Export again from an approved device.');
         if (is_dir($work)) datasetRemoveTree($work);mkdir($work,0700);
         $estimate=0;foreach ($p['clips'] as $clip) $estimate+=(int)(($clip['end']-$clip['start'])*2*1024*1024);
         datasetStorageCheck($estimate*2);
-        $zip=new ZipArchive();
-        if ($zip->open($work.'/dataset.zip',ZipArchive::CREATE|ZipArchive::OVERWRITE)!==true) throw new RuntimeException('Dataset ZIP unavailable. Install the PHP zip extension.');
-        try {
-            $n=0;$deadline=microtime(true)+18000;
-            foreach ($p['clips'] as $clip) {
-                if (microtime(true)>$deadline) throw new RuntimeException('Dataset export exceeded five hours. Split this dataset into smaller projects.');
-                $n++;datasetClip($clip,$p);
-                datasetEncode($directory.'/'.$clip['videoID'].'/original',$work.'/'.$n.'.mp4',$clip['start'],$clip['end']-$clip['start'],$clip['crop']);
-                if (!$zip->addFile($work.'/'.$n.'.mp4',$n.'.mp4') || !$zip->addFromString($n.'.txt',$clip['caption'])) throw new RuntimeException('Could not add a clip to the dataset ZIP.');
+        if ($folder) $stage=datasetFolderStage($id);
+        $archive=$directory.'/dataset-'.$p['revision'].'.zip';
+        $reuse=$folder && ($p['exportRevision'] ?? -1)===$p['revision'] && is_file($archive);
+        if ($reuse) datasetFolderFromZIP($archive,$stage,$p);
+        else {
+            if (!$folder) {
+                $zip=new ZipArchive();
+                if ($zip->open($work.'/dataset.zip',ZipArchive::CREATE|ZipArchive::OVERWRITE)!==true) throw new RuntimeException('Dataset ZIP unavailable. Install the PHP zip extension.');
             }
-        } finally { if (!$zip->close()) throw new RuntimeException('Could not finish the dataset ZIP.'); }
-        chmod($work.'/dataset.zip',0600);
+            $n=0;$deadline=microtime(true)+18000;
+            try {
+                foreach ($p['clips'] as $clip) {
+                    if (microtime(true)>$deadline) throw new RuntimeException('Dataset export exceeded five hours. Split this dataset into smaller projects.');
+                    $n++;datasetClip($clip,$p);
+                    datasetEncode($directory.'/'.$clip['videoID'].'/original',$work.'/'.$n.'.mp4',$clip['start'],$clip['end']-$clip['start'],$clip['crop']);
+                    if ($folder) {
+                        $caption=$work.'/'.$n.'.txt';
+                        if (file_put_contents($caption,$clip['caption'])!==strlen($clip['caption'])) throw new RuntimeException('Could not save a dataset caption. Check available storage.');
+                        chmod($caption,0600);
+                        datasetFolderFile($work.'/'.$n.'.mp4',$stage.'/'.$n.'.mp4');datasetFolderFile($caption,$stage.'/'.$n.'.txt');
+                    } elseif (!$zip->addFile($work.'/'.$n.'.mp4',$n.'.mp4') || !$zip->addFromString($n.'.txt',$clip['caption'])) throw new RuntimeException('Could not add a clip to the dataset ZIP.');
+                }
+            } finally { if ($zip!==null && !$zip->close()) throw new RuntimeException('Could not finish the dataset ZIP.'); }
+        }
+        if (!$folder) chmod($work.'/dataset.zip',0600);
         if (!datasetDeviceActive($p['exportDevice'])) throw new RuntimeException('The exporting device was revoked.');
-        datasetUpdate($id,static function(&$current) use ($p,$work,$directory) {
+        datasetUpdate($id,static function(&$current) use ($p,$work,$directory,$folder,&$stage) {
             if ($current['revision']!==$p['revision']) { $current['exportStatus']='none';$current['exportError']='Dataset changed during rendering. Export again to include the changes.';return; }
-            if (!rename($work.'/dataset.zip',$directory.'/dataset-'.$p['revision'].'.zip')) throw new RuntimeException('Could not save the dataset ZIP.');
-            $current['exportStatus']='ready';$current['exportRevision']=$p['revision'];$current['exportError']=null;
+            if ($folder) { $current['exportFolderName']=datasetPublishFolder($stage,$p);$stage=null; }
+            elseif (!rename($work.'/dataset.zip',$directory.'/dataset-'.$p['revision'].'.zip')) throw new RuntimeException('Could not save the dataset ZIP.');
+            $current['exportStatus']='ready';$current['exportRevision']=$p['revision'];$current['exportFormat']=$folder ? 'folder' : 'zip';$current['exportError']=null;
         });
         $current=datasetRead($id);
         foreach (glob($directory.'/dataset-*.zip') ?: [] as $old) if ($old!==$directory.'/dataset-'.($current['exportRevision'] ?? -1).'.zip') unlink($old);
     } catch (Throwable $e) { datasetUpdate($id,static function(&$p) use ($e) { $p['exportStatus']='failed';$p['exportError']=$e instanceof RuntimeException ? $e->getMessage() : 'Dataset export failed. Check server video tools and retry.'; }); }
-    finally { if (is_dir($work)) datasetRemoveTree($work); }
+    finally { if ($stage!==null && is_dir($stage)) datasetRemoveTree($stage);if (is_dir($work)) datasetRemoveTree($work); }
 }
 function datasetWorker(): void {
     $lock=fopen(datasetRoot().'/worker.lock','c');chmod(datasetRoot().'/worker.lock',0600);

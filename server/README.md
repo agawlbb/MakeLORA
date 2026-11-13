@@ -538,3 +538,46 @@ The mode-0600 `google-drive-client.json` in private storage takes precedence ove
 legacy settings keys. It is read by the API and worker too; no app release or
 server restart is needed after uploading. The file is covered by the existing
 private-data backup capture. Never upload credentials through chat or commit them.
+
+
+## Direct FileBrowser Quantum dataset export
+
+Configure `dataset_export_directory` privately as
+`/var/www-data/makelora/filebrowser-datasets` and `dataset_export_label` as
+`VPS / MakeLORA datasets`. The configured directory must already exist, be writable
+by PHP, and grant no group/other write access at its root (production UID 33,
+GID 1000, mode 2750). It must be outside private session storage, application
+source and web roots. A scoped FileBrowser bind exposes only this publication
+directory at `/folder/MakeLORA datasets`; original videos, editable projects and
+credentials remain outside FileBrowser. The infrastructure repository tracks the
+Compose override and installer. No database migration is needed.
+
+With this configuration, `dataset_export` defaults to a **folder**, including when
+existing app builds send an empty request body. New clients explicitly send
+`format: folder` and show `exportFolder` when ready. The response's
+`exportDestination` is `filebrowser`; `exportURL` is null for folder exports. The
+updated app replaces the ZIP share action with **Export to FileBrowser Quantum**
+and a selectable destination path. A new app release is needed for that label and
+status display, but the existing **Render dataset on server** button also queues
+folder publication after server setup. `format: zip` remains available for legacy
+integrations, without requiring ZIP for the folder workflow.
+
+A published dataset contains only numbered `1.mp4`, `1.txt`, etc. in one directory.
+The worker reuses the current private rendered ZIP if available, copying its exact
+MP4/TXT entries without re-encoding. It validates entry names/counts/sizes and
+matching captions rather than blindly extracting an archive. Otherwise it renders
+clips and copies them directly without creating a ZIP. Originals stay untouched.
+Only metadata and previews travel to the device.
+
+Publication stages privately (mode 2700) under the scoped root and publishes the
+completed folder under the dataset name. Existing names get `-r<revision>` and,
+if necessary, a unique suffix. Existing files/folders are never replaced or
+pruned. Exported directories are mode 2770 and files 0660, inheriting group 1000
+for FileBrowser access. The managed root cannot be renamed/tampered with by the
+FileBrowser process; files inside published folders follow FileBrowser's existing
+account permissions. Old snapshots remain after edits or project deletion and
+are managed separately from the editable dataset. Stale revisions and revoked
+requesting devices prevent publication; failed/partial copies are removed, and
+a restarted job removes only its own hidden crash leftovers. Published data counts
+toward the existing dataset storage budget and is included in the existing shared
+frontend data backup capture. No new backup/cleanup schedule is installed.

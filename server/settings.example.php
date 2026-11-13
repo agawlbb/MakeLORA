@@ -17,6 +17,9 @@ return [
  'google_drive_client_secret'=>'',
  'ffmpeg_binary'=>'/usr/bin/ffmpeg',
  'dataset_video_limit_bytes'=>2*1024*1024*1024,
+ // Scoped publication root, mapped into FileBrowser Quantum; originals stay private.
+ 'dataset_export_directory'=>'',
+ 'dataset_export_label'=>'VPS / MakeLORA datasets',
  'dataset_storage_limit_bytes'=>50*1024*1024*1024,
  'ffprobe_binary'=>'/usr/bin/ffprobe',
  'private_session_directory'=>'/var/lib/makelora/private-sessions',

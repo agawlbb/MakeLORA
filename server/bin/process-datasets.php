@@ -6,6 +6,7 @@ require dirname(__DIR__).'/src/bootstrap.php';
 require dirname(__DIR__).'/src/dataset-worker.php';
 try {
     datasetRoot();datasetFFmpeg();requireVideoTools();
+    if (datasetFolderConfigured()) datasetFolderRoot();
     if (!class_exists(ZipArchive::class)) throw new RuntimeException('Install the PHP zip extension.');
     if (in_array('--check',$argv,true)) { echo "Dataset storage and video tools ready.\n";exit; }
     datasetWorker();

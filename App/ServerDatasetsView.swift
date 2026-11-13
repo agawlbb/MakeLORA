@@ -132,16 +132,20 @@ private struct ServerDatasetWorkspace: View {
                 }
             }
             Section("480p dataset") {
-                Button("Render dataset on server", systemImage: "film.stack") { Task { await store.perform { try await store.export() } } }.disabled(project.clips.isEmpty || ["queued", "processing"].contains(project.exportStatus))
+                Button("Export to FileBrowser Quantum", systemImage: "folder.badge.plus") { Task { await store.perform { try await store.export() } } }.disabled(project.clips.isEmpty || project.exportDestination != "filebrowser" || ["queued", "processing"].contains(project.exportStatus))
                 if ["queued", "processing"].contains(project.exportStatus) {
                     Label("\(project.exportStatus.capitalized) · you can close the app", systemImage: "clock")
                 }
                 if let error = project.exportError { Text(error).font(.caption).foregroundStyle(.red) }
-                if let url = project.exportURL {
-                    Text("Ready on server. ZIP contains numbered MP4/TXT pairs. The shorter side is 480 pixels, preserving the cropped aspect ratio.").font(.footnote)
-                    ShareLink("Share download link", item: url)
-                    Text("The private download link expires after one hour and grants access to this ZIP. Share it only with your training server or someone you trust.").font(.caption).foregroundStyle(.secondary)
+                if let folder = project.exportFolder {
+                    Label("Dataset copied to FileBrowser Quantum", systemImage: "checkmark.circle")
+                    Text(folder).font(.callout).textSelection(.enabled)
+                    Text("The folder contains matching numbered MP4/TXT pairs at 480p. Open FileBrowser Quantum and select the VPS source to find it.").font(.footnote).foregroundStyle(.secondary)
                 }
+                if project.exportDestination != "filebrowser" {
+                    Text("FileBrowser export is not available on this server yet.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Text("Files go directly from the server to FileBrowser. Each export creates a new folder and keeps existing exports.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .refreshable { await store.perform { try await store.open(project.id) } }

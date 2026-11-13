@@ -27,6 +27,9 @@ class DatasetTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory(prefix='makelora-datasets-')
         cls.root = Path(cls.temporary.name)
+        cls.exports_temporary = tempfile.TemporaryDirectory(prefix='makelora-published-')
+        cls.exports = Path(cls.exports_temporary.name)
+        cls.exports.chmod(0o750)
         cls.root.chmod(0o700)
         (cls.root / 'dataset-signing-key').write_text(SIGNING)
         (cls.root / 'google-drive.json').write_text(json.dumps({'connection': 'fixture-connection'}))
@@ -39,6 +42,7 @@ class DatasetTests(unittest.TestCase):
         # worker claims, validation, FFmpeg and ZIP processing are the production functions.
         cls.bootstrap = '''<?php
         $config=['private_session_directory'=>%s,'base_url'=>%s];
+        if (is_file($config['private_session_directory'].'/folder-config')) { $config['dataset_export_directory']=trim(file_get_contents($config['private_session_directory'].'/folder-config')); $config['dataset_export_label']='VPS / MakeLORA datasets'; }
         function fail(string $message,int $code=400): never { http_response_code($code);header('Content-Type: application/json');echo json_encode(['error'=>$message]);exit; }
         function jsonResponse(array $data,int $code=200): never { http_response_code($code);header('Content-Type: application/json');echo json_encode($data);exit; }
         function query(string $sql,array $params=[]): object {
@@ -75,9 +79,16 @@ class DatasetTests(unittest.TestCase):
         cls.process.terminate()
         cls.process.wait(timeout=5)
         cls.temporary.cleanup()
+        cls.exports_temporary.cleanup()
 
     def setUp(self):
         (self.root / 'revoked').unlink(missing_ok=True)
+        (self.root / 'folder-config').unlink(missing_ok=True)
+        for path in self.exports.iterdir():
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
         for path in (self.root / 'datasets').glob('*'):
             if path.is_dir():
                 shutil.rmtree(path)
@@ -230,6 +241,96 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(self.api('dataset', id=p['id'])[1]['exportStatus'], 'ready')
         with self.request(p['exportURL'], auth=False) as reply:
             self.assertEqual(reply.status, 404, 'old export links must not gain access to a newly rendered revision')
+
+    def folder_setup(self, name='WithoutGlasses'):
+        clip = self.ready_source()
+        _, p = self.api('dataset_save', id=self.project['id'], body={'name': name, 'revision': 0, 'clips': [clip]})
+        archive = self.directory / f'dataset-{p["revision"]}.zip'
+        with zipfile.ZipFile(archive, 'w') as out:
+            out.write(ROOT / 'tests/fixtures/wan-output.mp4', '1.mp4')
+            out.writestr('1.txt', clip['caption'])
+        internal = json.loads((self.directory / 'project.json').read_text())
+        internal.update(exportStatus='ready', exportRevision=p['revision'], exportFormat='zip')
+        (self.directory / 'project.json').write_text(json.dumps(internal))
+        (self.root / 'folder-config').write_text(str(self.exports))
+        return clip, p
+
+    def run_worker(self):
+        worker = self.root / 'worker.php'
+        worker.write_text(self.bootstrap + 'datasetWorker();')
+        subprocess.run(['php', str(worker)], check=True, timeout=60)
+
+    def test_folder_export_reuses_ready_zip_and_keeps_existing_snapshots(self):
+        clip, p = self.folder_setup()
+        old_url = self.api('dataset', id=p['id'])[1]['exportURL']
+        self.assertEqual(self.api('dataset_export', id=p['id'], body={})[0], 202)
+        self.run_worker()
+        _, result = self.api('dataset', id=p['id'])
+        self.assertEqual(result['exportStatus'], 'ready', result.get('exportError'))
+        self.assertEqual(result['exportFolder'], 'VPS / MakeLORA datasets / WithoutGlasses')
+        self.assertIsNone(result['exportURL'])
+        folder = self.exports / 'WithoutGlasses'
+        self.assertEqual(sorted(x.name for x in folder.iterdir()), ['1.mp4', '1.txt'])
+        self.assertEqual((folder / '1.mp4').read_bytes(), (ROOT / 'tests/fixtures/wan-output.mp4').read_bytes())
+        self.assertEqual((folder / '1.txt').read_text(), clip['caption'])
+        self.assertEqual((folder / '1.txt').stat().st_mode & 0o777, 0o660)
+        self.assertEqual(folder.stat().st_mode & 0o7777, 0o2770)
+        with self.request(old_url, auth=False) as reply:
+            self.assertEqual(reply.status, 404)
+        (folder / 'keep-my-file').write_text('User file')
+        self.api('dataset_export', id=p['id'], body={'format': 'folder'})
+        self.run_worker()
+        self.assertEqual((folder / 'keep-my-file').read_text(), 'User file')
+        self.assertTrue((self.exports / f'WithoutGlasses-r{p["revision"]}' / '1.mp4').exists())
+        self.assertFalse(any(x.name.startswith('.makelora-') for x in self.exports.iterdir()))
+
+    def test_folder_export_sanitizes_names_and_does_not_overwrite_files(self):
+        _, p = self.folder_setup('../Outside/name')
+        (self.exports / 'Outside_name').write_text('Existing file')
+        self.api('dataset_export', id=p['id'], body={'format': 'folder'})
+        self.run_worker()
+        self.assertEqual((self.exports / 'Outside_name').read_text(), 'Existing file')
+        folder = self.exports / f'Outside_name-r{p["revision"]}'
+        self.assertTrue((folder / '1.mp4').exists())
+        self.assertFalse((self.exports.parent / 'Outside').exists())
+
+    def test_folder_export_rejects_unavailable_or_private_destinations_before_queueing(self):
+        _, p = self.folder_setup()
+        for destination in [self.root, self.root / 'not-a-folder']:
+            (self.root / 'folder-config').write_text(str(destination))
+            self.assertEqual(self.api('dataset_export', id=p['id'], body={'format': 'folder'})[0], 503)
+        (self.root / 'folder-config').write_text(str(self.exports))
+        self.exports.chmod(0o770)
+        try:
+            self.assertEqual(self.api('dataset_export', id=p['id'], body={'format': 'folder'})[0], 503)
+        finally:
+            self.exports.chmod(0o750)
+
+    def test_folder_export_rejects_invalid_zip_paths_and_removes_partial_output(self):
+        _, p = self.folder_setup()
+        with zipfile.ZipFile(self.directory / f'dataset-{p["revision"]}.zip', 'w') as out:
+            out.writestr('../escaped.mp4', 'Never extracted')
+            out.writestr('1.txt', 'Wrong caption')
+        self.api('dataset_export', id=p['id'], body={'format': 'folder'})
+        self.run_worker()
+        self.assertEqual(self.api('dataset', id=p['id'])[1]['exportStatus'], 'failed')
+        self.assertEqual(list(self.exports.iterdir()), [])
+        self.assertFalse((self.exports.parent / 'escaped.mp4').exists())
+
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'real FFmpeg required')
+    def test_fresh_folder_export_renders_without_creating_zip(self):
+        clip = self.ready_source()
+        (self.root / 'folder-config').write_text(str(self.exports))
+        source = self.directory / VIDEO / 'original.mp4'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=blue:size=320x180:rate=24:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(source)], check=True)
+        source.rename(source.with_name('original'))
+        self.api('dataset_save', id=self.project['id'], body={'name': 'Fresh folder', 'revision': 0, 'clips': [clip]})
+        self.api('dataset_export', id=self.project['id'], body={'format': 'folder'})
+        self.run_worker()
+        result = self.api('dataset', id=self.project['id'])[1]
+        self.assertEqual(result['exportStatus'], 'ready', result.get('exportError'))
+        self.assertEqual(sorted(x.name for x in (self.exports / 'Fresh folder').iterdir()), ['1.mp4', '1.txt'])
+        self.assertEqual(list(self.directory.glob('dataset-*.zip')), [])
 
     def test_delete_invalidates_preview_and_busy_delete_is_rejected(self):
         self.ready_source()
