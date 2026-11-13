@@ -412,14 +412,18 @@ Server datasets are editable manifests, independent from local project formats.
 This feature requires server deployment and a new app release. No database
 migration is needed: atomically replaced JSON manifests live beside private
 video files under `private_session_directory/datasets`. Preserve this directory,
-`google-drive.json` and `dataset-signing-key` with the existing private backup
+`google-drive-client.json`, `google-drive.json` and `dataset-signing-key` with the existing private backup
 inventory. They are not web-accessible. Do not create another backup job.
 
 1. Enable the Google Drive API in a dedicated Google Cloud project. Configure
    an OAuth consent screen and a **Web application** OAuth client. Register the
    exact redirect `https://vps.coffeybean.com/MakeLORA/drive.php` (or your configured
-   `base_url` plus `/drive.php`). Put `google_drive_client_id` and
-   `google_drive_client_secret` in the existing private settings file. Do not use
+   `base_url` plus `/drive.php`). Download the Web client JSON and upload it through
+   **Google Drive connection → Upload client JSON** on the authenticated server
+   website. The server validates the client type/redirect, stores only client ID
+   and secret privately, and never echoes the secret. Existing private settings
+   keys `google_drive_client_id`/`google_drive_client_secret` remain a fallback
+   when there is no uploaded client file. Do not use
    credentials belonging to another app, or put credentials in Git/the iOS app.
 2. Deploy code and the updated gateway allowlist (`drive.php`). Ensure FFmpeg,
    ffprobe, PHP cURL/mbstring/zip and `proc_open` are available. PHP's user needs
@@ -525,3 +529,12 @@ synthetic tests do not prove Google consent configuration or access to your file
 Manual `validate.yml` dispatches default to server tests and an iOS Swift source
 type check without producing an app build. Set `build_app=true` only when an app
 build/test has been requested. Automatic push/PR app validation is unchanged.
+
+The protected Drive page accepts Google Web client JSON uploads up to 32 KiB.
+A matching server redirect URI and CSRF token are required. Replacing an existing
+client requires explicit confirmation, removes the current server Drive tokens
+and invalidates pending authorization for the old client; imported datasets remain.
+The mode-0600 `google-drive-client.json` in private storage takes precedence over
+legacy settings keys. It is read by the API and worker too; no app release or
+server restart is needed after uploading. The file is covered by the existing
+private-data backup capture. Never upload credentials through chat or commit them.

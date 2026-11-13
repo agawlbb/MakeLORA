@@ -11,9 +11,34 @@ function driveRoot(): string {
     if (!configurePrivateSession($root)) throw new RuntimeException('Private server storage is not configured.');
     $verified=$root;return $root;
 }
-function driveConfigured(): bool {
+function driveClient(): array {
     global $config;
-    return !empty($config['google_drive_client_id']) && !empty($config['google_drive_client_secret']);
+    $path=driveRoot().'/google-drive-client.json';
+    if (is_file($path)) {
+        $saved=json_decode(file_get_contents($path),true);
+        return ['client_id'=>$saved['client_id'] ?? '', 'client_secret'=>$saved['client_secret'] ?? ''];
+    }
+    return ['client_id'=>$config['google_drive_client_id'] ?? '', 'client_secret'=>$config['google_drive_client_secret'] ?? ''];
+}
+function driveConfigured(): bool {
+    $client=driveClient();
+    return is_string($client['client_id']) && $client['client_id']!=='' && is_string($client['client_secret']) && $client['client_secret']!=='';
+}
+function driveClientFingerprint(): string { return hash('sha256',json_encode(driveClient(),JSON_THROW_ON_ERROR)); }
+function driveSaveClient(array $download,bool $replace): void {
+    global $config;
+    $web=$download['web'] ?? null;
+    if (!is_array($web)) throw new InvalidArgumentException('Choose the JSON downloaded for your Google Web application client. Desktop client files are not supported.');
+    $id=$web['client_id'] ?? null;$secret=$web['client_secret'] ?? null;
+    if (!is_string($id) || !preg_match('/^[a-zA-Z0-9._-]{1,512}\.apps\.googleusercontent\.com$/D',$id) || !is_string($secret) || !preg_match('/^[\x21-\x7e]{1,512}$/D',$secret)) throw new InvalidArgumentException('The JSON is missing a valid Google client ID or secret. Download the Web application client JSON again.');
+    $redirect=rtrim($config['base_url'],'/').'/drive.php';
+    if (!is_array($web['redirect_uris'] ?? null) || !in_array($redirect,$web['redirect_uris'],true)) throw new InvalidArgumentException('The Google client is missing this server’s exact redirect URI. Add the URI shown below in Google, then download the JSON again.');
+    driveLock(static function() use ($id,$secret,$replace) {
+        if ((driveConfigured() || driveRead()!==null) && !$replace) throw new InvalidArgumentException('Confirm replacement before changing existing Google client settings.');
+        // Persist only credentials. Never trust downloaded auth/token URLs or return them to a device.
+        privateJSON(driveRoot().'/google-drive-client.json',['client_id'=>$id,'client_secret'=>$secret]);
+        $tokens=driveRoot().'/google-drive.json';if (is_file($tokens) && !unlink($tokens)) throw new RuntimeException('Could not disconnect the previous Drive account. Retry saving the client.');
+    });
 }
 function driveRead(): ?array {
     $path=driveRoot().'/google-drive.json';
@@ -36,7 +61,7 @@ function driveLock(callable $work): mixed {
 function driveTokenRequest(array $fields): array {
     global $config;
     if (!driveConfigured()) throw new RuntimeException('Configure Google Drive on the server first.');
-    $fields+=['client_id'=>$config['google_drive_client_id'],'client_secret'=>$config['google_drive_client_secret']];
+    $fields+=driveClient();
     $curl=curl_init('https://oauth2.googleapis.com/token');
     curl_setopt_array($curl,[CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>http_build_query($fields),CURLOPT_RETURNTRANSFER=>true,CURLOPT_FOLLOWLOCATION=>false,CURLOPT_CONNECTTIMEOUT=>15,CURLOPT_TIMEOUT=>30,CURLOPT_PROTOCOLS=>CURLPROTO_HTTPS]);
     $raw=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);curl_close($curl);
