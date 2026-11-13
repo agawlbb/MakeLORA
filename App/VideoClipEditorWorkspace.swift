@@ -224,25 +224,32 @@ struct VideoClipEditorWorkspace: View {
     private func hideKeyboard() { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
     private func save(close: Bool = false, addAnother: Bool = false) {
         guard !saving else { return }
-        hideKeyboard(); playback.pause(); saving = true; error = nil
+        hideKeyboard(); playback.pause(); error = nil
         let nextStart = selected?.end ?? playback.position
+        if !session.hasChanges {
+            if close { dismiss() }
+            else if addAnother { beginNextClip(at: nextStart) }
+            return
+        }
+        saving = true
         Task {
             defer { saving = false }
             do {
-                for clip in session.clips {
-                    guard clip.start.isFinite, clip.end.isFinite, clip.start >= 0, clip.end > clip.start, clip.end <= duration else { throw ProjectError.invalid("Choose start and end times inside the source video.") }
+                for (index, clip) in session.clips.enumerated() {
+                    guard clip.start.isFinite, clip.end.isFinite, clip.start >= 0, clip.end > clip.start, clip.end <= duration else { throw ProjectError.invalid("Clip \(index+1): choose start and end times inside the source video.") }
                     let aspect = sourceAspect*clip.crop.width/clip.crop.height
-                    guard aspect >= 1.0/16 && aspect <= 16 else { throw ProjectError.invalid("A clip’s crop is too narrow to export. Choose a wider crop or a preset shape.") }
+                    guard aspect >= 1.0/16 && aspect <= 16 else { throw ProjectError.invalid("Clip \(index+1): the crop is too narrow to export. Choose a wider crop or a preset shape.") }
                 }
                 let result = try await saveEdits(session.baseline, session.clips)
                 session.accept(result); notice = "Saved \(result.clips.count) clips from this source."
                 if close { dismiss() }
-                else if addAnother {
-                    if session.add(at: nextStart, fallbackToBeginning: false) { selectedChanged(); tab = .trim }
-                    else { notice = "Saved. You’re at the end of the source. Move the playhead earlier and select Add clip to make an overlapping clip." }
-                }
+                else if addAnother { beginNextClip(at: nextStart) }
             } catch { self.error = error.localizedDescription }
         }
+    }
+    private func beginNextClip(at time: Double) {
+        if session.add(at: time, fallbackToBeginning: false) { selectedChanged(); tab = .trim }
+        else { notice = "Saved. You’re at the end of the source. Move the playhead earlier and select Add clip to make an overlapping clip." }
     }
     private func refreshPreview(_ action: @escaping () async throws -> VideoEditorMedia) {
         refreshing = true; playbackError = nil

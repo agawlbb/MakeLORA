@@ -90,6 +90,17 @@ final class VideoEditingTests: XCTestCase {
         let added = try project.saveVideoEdits(video: video.id, baseline: [], edited: [second])
         XCTAssertEqual(added.idMapping["temporary"], "3")
     }
+    func testEditingOneSourceRetainsInterleavedProjectClipOrder() throws {
+        let first = LibraryVideo(filename: "a.mp4", name: "A", duration: 100, width: 1920, height: 1080)
+        let second = LibraryVideo(filename: "b.mp4", name: "B", duration: 100, width: 1920, height: 1080)
+        var project = Project(name: "Sources", model: .wan21I2V14B); project.videos = [first, second]
+        project.addSample(video: first); project.addSample(video: second); project.addSample(video: first)
+        let baseline = project.samples.filter { $0.video == first.id }.map(VideoEditingClip.init)
+        var edited = baseline; edited[0].caption = "Changed"
+        _ = try project.saveVideoEdits(video: first.id, baseline: baseline, edited: edited)
+        XCTAssertEqual(project.samples.map(\.id), [1, 2, 3])
+        XCTAssertEqual(project.samples[1].video, second.id)
+    }
     func testFailedLocalSaveDoesNotPartiallyMutateProjectOrConsumeIDs() {
         let video = LibraryVideo(filename: "source.mp4", name: "Source", duration: 100, width: 1920, height: 1080)
         var project = Project(name: "Video edits", model: .wan21I2V14B); project.videos = [video]

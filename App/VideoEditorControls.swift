@@ -86,7 +86,7 @@ struct VideoEditorTimeline: View {
                 ZStack(alignment: .topLeading) {
                     thumbnails.frame(width: width, height: 70).clipped().offset(x: padding, y: 5)
                         .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in position = min(duration, max(0, value.location.x/width*duration)) })
+                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("videoEditorTimeline")).onChanged { value in position = min(duration, max(0, (value.location.x-padding)/width*duration)) })
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*start/duration, height: 70).offset(x: padding, y: 5).allowsHitTesting(false)
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*(1-end/duration), height: 70).offset(x: padding+width*end/duration, y: 5).allowsHitTesting(false)
                     Rectangle().stroke(.yellow, lineWidth: 2).frame(width: max(1, width*(end-start)/duration), height: 70).offset(x: padding+width*start/duration, y: 5).allowsHitTesting(false)

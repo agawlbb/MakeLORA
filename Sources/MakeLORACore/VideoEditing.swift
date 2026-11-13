@@ -120,7 +120,7 @@ public enum VideoCropGeometry {
             let upper = min(maxW, maxH*ratio), lower = min(upper, max(0.05, 0.05*ratio))
             w = min(upper, max(lower, desired)); h = w/ratio
         } else { w = min(maxW, max(min(0.05, maxW), w)); h = min(maxH, max(min(0.05, maxH), h)) }
-        return Crop(x: left ? ax-w : ax, y: top ? ay-h : ay, width: w, height: h)
+        return Crop(x: left ? ax-w : ax, y: top ? ay-h : ay, width: w, height: h).clamped
     }
 }
 
