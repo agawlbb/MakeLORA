@@ -4,6 +4,11 @@ on:
     branches: [main, 'feat/**', 'fix/**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_app:
+        description: Build and test an iPad app (leave off for source/server checks only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -11,6 +16,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
+    if: github.event_name != 'workflow_dispatch' || inputs.build_app == true
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -42,3 +48,25 @@ jobs:
             build/Tests.xcresult
             build/iPad-preview.png
           retention-days: 7
+
+  server:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y php-cli php-curl php-mbstring php-zip ffmpeg
+      - run: python3 -m unittest discover -s server/tests -p 'test_*.py' -v
+      - run: find server/src server/public server/bin -name '*.php' -exec php -l {} \;
+  swift-types:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check iOS source types without producing an app build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          modules=$(mktemp -d)
+          xcrun swiftc -emit-module -parse-as-library -module-name MakeLORACore -target arm64-apple-ios17.0-simulator -sdk "$sdk" Sources/MakeLORACore/*.swift -emit-module-path "$modules/MakeLORACore.swiftmodule"
+          xcrun swiftc -typecheck -parse-as-library -module-name MakeLORA -target arm64-apple-ios17.0-simulator -sdk "$sdk" -I "$modules" App/*.swift
