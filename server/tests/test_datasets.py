@@ -122,6 +122,38 @@ class DatasetTests(unittest.TestCase):
         self.assertFalse((self.directory / p['videos'][0]['id']).exists(), 'web request must only queue download')
         self.assertEqual(self.api('dataset_import', id=self.project['id'], body={'files': ['../../escape']})[0], 400)
 
+    def test_worker_recovers_interrupted_import_and_reports_changed_drive_connection(self):
+        _, p = self.api('dataset_import', id=self.project['id'], body={'files': ['drive_video']})
+        internal = json.loads((self.directory / 'project.json').read_text())
+        video = p['videos'][0]['id']
+        internal['videos'][video]['status'] = 'processing'
+        internal['videos'][video]['connection'] = 'disconnected-account'
+        (self.directory / 'project.json').write_text(json.dumps(internal))
+        partial = self.directory / video
+        partial.mkdir()
+        (partial / 'original').write_bytes(b'interrupted download')
+        worker = self.root / 'worker.php'
+        worker.write_text(self.bootstrap + 'datasetWorker();')
+        subprocess.run(['php', str(worker)], check=True, timeout=10)
+        _, result = self.api('dataset', id=self.project['id'])
+        self.assertEqual(result['videos'][0]['status'], 'failed')
+        self.assertIn('connection changed', result['videos'][0]['error'])
+        self.assertFalse(partial.exists())
+        self.assertTrue(self.api('drive_status')[1]['workerReady'])
+        _, retried = self.api('dataset_import', id=self.project['id'], body={'files': ['drive_video']})
+        self.assertEqual(len(retried['videos']), 1)
+        self.assertEqual(retried['videos'][0]['id'], video)
+        self.assertEqual(retried['videos'][0]['status'], 'queued')
+
+    def test_remove_source_removes_dependent_clips_and_files(self):
+        clip = self.ready_source()
+        self.api('dataset_save', id=self.project['id'], body={'name': 'Fixture', 'revision': 0, 'clips': [clip]})
+        status, result = self.api('dataset_remove_video', id=self.project['id'], video=VIDEO, body={})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['videos'], [])
+        self.assertEqual(result['clips'], [])
+        self.assertFalse((self.directory / VIDEO).exists())
+
     def test_validation_and_optimistic_concurrency(self):
         clip = self.ready_source()
         status, p = self.api('dataset_save', id=self.project['id'], body={'name': 'Edited', 'revision': 0, 'clips': [clip]})

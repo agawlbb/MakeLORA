@@ -78,6 +78,7 @@ private struct ServerDatasetWorkspace: View {
     @State private var drive = false
     @State private var editing: ServerDatasetClip?
     @State private var delete = false
+    @State private var removeSource: ServerDatasetVideo?
     @State private var rename = false
     @State private var name = ""
     @Environment(\.scenePhase) private var phase
@@ -124,6 +125,7 @@ private struct ServerDatasetWorkspace: View {
                             Button("Add another clip") { editing = ServerDatasetClip(id: ServerDatasetClip.identifier(), videoID: video.id, start: 0, end: duration, caption: "", crop: nil) }
                         }
                     }
+                    .swipeActions { Button("Remove source", role: .destructive) { removeSource = video } }
                 }
             }
             Section("480p dataset") {
@@ -159,6 +161,11 @@ private struct ServerDatasetWorkspace: View {
         }
         .confirmationDialog("Delete this dataset and its server copies? Drive originals are kept.", isPresented: $delete, titleVisibility: .visible) {
             Button("Delete dataset", role: .destructive) { Task { await store.perform { try await store.delete() } } }
+        }
+        .confirmationDialog("Remove this server source and all its clips? The Drive original is kept.", isPresented: Binding(get: { removeSource != nil }, set: { if !$0 { removeSource = nil } }), titleVisibility: .visible) {
+            if let video = removeSource {
+                Button("Remove source and clips", role: .destructive) { Task { await store.perform { try await store.removeVideo(video.id) } }; removeSource = nil }
+            }
         }
         .task(id: project.id) {
             while !Task.isCancelled {

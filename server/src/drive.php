@@ -70,7 +70,9 @@ function driveJSON(string $path,array $params=[],?string $connection=null): arra
 }
 function driveFiles(string $folder,string $page=''): array {
     $where=$folder==='shared' ? 'sharedWithMe=true' : "'".driveID($folder)."' in parents";
-    return driveJSON('files',['q'=>"trashed=false and ($where) and (mimeType='application/vnd.google-apps.folder' or mimeType contains 'video/')",'pageSize'=>100,'pageToken'=>$page,'orderBy'=>'folder,name','fields'=>'nextPageToken,files(id,name,mimeType,size)','supportsAllDrives'=>'true','includeItemsFromAllDrives'=>'true']);
+    $params=['q'=>"trashed=false and ($where) and (mimeType='application/vnd.google-apps.folder' or mimeType contains 'video/')",'pageSize'=>100,'orderBy'=>'folder,name','fields'=>'nextPageToken,files(id,name,mimeType,size)','supportsAllDrives'=>'true','includeItemsFromAllDrives'=>'true'];
+    if ($page!=='') $params['pageToken']=$page;
+    return driveJSON('files',$params);
 }
 function driveDownload(string $id,string $path,int $limit,string $connection): void {
     $out=fopen($path,'xb');

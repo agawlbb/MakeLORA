@@ -38,7 +38,7 @@ function datasetFilters(?array $crop=null,int $short=480): string {
     // First normalize display pixels. All crop coordinates refer to the rotated display image.
     $filters=['scale=trunc(iw*sar/2)*2:trunc(ih/2)*2','setsar=1'];
     if ($crop) $filters[]=sprintf('crop=trunc(iw*%.8F/2)*2:trunc(ih*%.8F/2)*2:trunc(iw*%.8F/2)*2:trunc(ih*%.8F/2)*2',$crop['width'],$crop['height'],$crop['x'],$crop['y']);
-    $filters[]="scale=w='if(gte(iw,ih),trunc($short*iw/ih/2)*2,$short)':h='if(gte(iw,ih),$short,trunc($short*ih/iw/2)*2)'";
+    $filters[]="scale=w='if(gte(iw,ih),round($short*iw/ih/2)*2,$short)':h='if(gte(iw,ih),$short,round($short*ih/iw/2)*2)'";
     $filters[]='setsar=1';return implode(',',$filters);
 }
 function datasetEncode(string $source,string $output,float $start,float $duration,?array $crop=null,bool $preview=false): void {
@@ -95,8 +95,9 @@ function datasetExportProject(string $id,array $p): void {
         $zip=new ZipArchive();
         if ($zip->open($work.'/dataset.zip',ZipArchive::CREATE|ZipArchive::OVERWRITE)!==true) throw new RuntimeException('Dataset ZIP unavailable. Install the PHP zip extension.');
         try {
-            $n=0;
+            $n=0;$deadline=microtime(true)+18000;
             foreach ($p['clips'] as $clip) {
+                if (microtime(true)>$deadline) throw new RuntimeException('Dataset export exceeded five hours. Split this dataset into smaller projects.');
                 $n++;datasetClip($clip,$p);
                 datasetEncode($directory.'/'.$clip['videoID'].'/original',$work.'/'.$n.'.mp4',$clip['start'],$clip['end']-$clip['start'],$clip['crop']);
                 if (!$zip->addFile($work.'/'.$n.'.mp4',$n.'.mp4') || !$zip->addFromString($n.'.txt',$clip['caption'])) throw new RuntimeException('Could not add a clip to the dataset ZIP.');
@@ -121,7 +122,11 @@ function datasetWorker(): void {
         // this global lock ensures no live worker still owns it, so it is safe to restart locally.
         foreach (glob(datasetRoot().'/*/project.json') ?: [] as $path) {
             $id=basename(dirname($path));
-            try { $p=datasetRead($id); } catch (InvalidArgumentException $e) { continue; }
+            try { $p=datasetRead($id); } catch (InvalidArgumentException $e) {
+                $raw=@file_get_contents($path);$deleted=$raw!==false ? json_decode($raw,true) : null;
+                if (($deleted['deleted'] ?? false) && is_dir(dirname($path))) datasetRemoveTree(dirname($path));
+                continue;
+            }
             foreach ($p['videos'] as $video) if (in_array($video['status'],['queued','processing'],true)) {
                 $claimed=false;
                 datasetUpdate($id,static function(&$p) use ($video,&$claimed) {

@@ -12,6 +12,8 @@ struct ServerClipEditor: View {
     @State private var boundary: Any?
     @State private var saving = false
     @State private var error: String?
+    @State private var playbackError: String?
+    @State private var refreshing = false
     init(store: ServerDatasetStore, project: ServerDataset, video: ServerDatasetVideo, initial: ServerDatasetClip) {
         self.store = store; self.project = project; self.video = video; self.initial = initial
         _draft = State(initialValue: initial)
@@ -36,6 +38,17 @@ struct ServerClipEditor: View {
                                 }
                             }
                     } else { Text("Preview unavailable. Reopen the dataset to refresh its preview link.") }
+                    if let playbackError { Text(playbackError).font(.footnote).foregroundStyle(.orange) }
+                    Button(refreshing ? "Refreshing preview…" : "Refresh preview", systemImage: "arrow.clockwise") {
+                        Task {
+                            refreshing = true; defer { refreshing = false }
+                            do {
+                                try await store.open(project.id)
+                                guard let url = store.project?.videos.first(where: { $0.id == video.id })?.previewURL else { throw URLError(.resourceUnavailable) }
+                                installPlayer(url)
+                            } catch { playbackError = error.localizedDescription }
+                        }
+                    }.disabled(refreshing)
                     if let urls = video.thumbnails {
                         HStack(spacing: 1) {
                             ForEach(Array(urls.enumerated()), id: \.offset) { index, url in
@@ -99,7 +112,20 @@ struct ServerClipEditor: View {
             }
             .interactiveDismissDisabled(saving)
             .onAppear {
-                if let url = video.previewURL { player = AVPlayer(url: url); seek(draft.start); updateBoundary() }
+                if let url = video.previewURL { installPlayer(url) }
+            }
+            .task(id: player.map { ObjectIdentifier($0) }) {
+                guard let observed = player else { return }
+                var waiting = 0
+                while !Task.isCancelled {
+                    if observed.currentItem?.status == .failed {
+                        playbackError = "Preview could not be played. Check your connection and refresh the preview."
+                        return
+                    }
+                    if observed.timeControlStatus == .waitingToPlayAtSpecifiedRate || observed.currentItem?.status == .unknown { waiting += 1 } else { waiting = 0 }
+                    if waiting == 30 { playbackError = "Preview is taking longer than expected. Check your connection or refresh its link." }
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                }
             }
             .onDisappear {
                 player?.pause()
@@ -115,6 +141,11 @@ struct ServerClipEditor: View {
             Text("\(label) · \(Int((crop[keyPath: keyPath] * 100).rounded()))%")
             Slider(value: Binding(get: { crop[keyPath: keyPath] }, set: { var value = crop; value[keyPath: keyPath] = $0; draft.crop = value }), in: range).accessibilityLabel(label)
         }
+    }
+    private func installPlayer(_ url: URL) {
+        player?.pause()
+        if let boundary { player?.removeTimeObserver(boundary); self.boundary = nil }
+        playbackError = nil; player = AVPlayer(url: url); seek(draft.start); updateBoundary()
     }
     private func seek(_ seconds: Double) {
         guard seconds.isFinite else { return }

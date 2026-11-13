@@ -482,7 +482,8 @@ lock prevents duplicate work; a surviving `processing` state is restarted after 
 crash, without creating external inference jobs. Status and sanitized errors are
 stored in the manifest. Local originals are replaced when restarting an interrupted
 import; temporary render files are replaced on export retry. A failed import can
-be retried in the app. The app warns when the worker has no recent heartbeat and
+be retried in place in the app. Swipe a source row to remove its retained files
+and dependent clips; active processing must finish first. The app warns when the worker has no recent heartbeat and
 is not currently running. Delete a dataset after its active processing finishes to
 remove originals/previews/exports; queued work is removed with it. Drive originals
 are never modified. List/GET operations do not trigger processing.
@@ -502,6 +503,7 @@ Additional APIs (all active-device bearer authentication except signed media):
 `drive_status`, `drive_files` (`folder`, `page`), `datasets`, `dataset_create` (POST
 name), `dataset` (GET id), `dataset_import` (POST id, files), `dataset_save` (POST id,
 name, revision, clips), `dataset_export` (POST id), `dataset_delete` (POST id), and
+`dataset_remove_video` (POST id, video query parameter), and
 `dataset_media` (scoped signed GET/HEAD). No API returns original server paths or
 Google credentials. The `drive.php` browser route requires normal management
 sign-in and CSRF-protected connect/disconnect; a paired device cannot replace
@@ -519,3 +521,7 @@ invalid paths/trim/crop, revision conflicts, scoped playback, expiry/revocation,
 byte ranges/HEAD, deletion and stale export invalidation. Complete a live OAuth
 connection and one private Drive import after configuring the dedicated client;
 synthetic tests do not prove Google consent configuration or access to your files.
+
+Manual `validate.yml` dispatches default to server tests and an iOS Swift source
+type check without producing an app build. Set `build_app=true` only when an app
+build/test has been requested. Automatic push/PR app validation is unchanged.

@@ -156,6 +156,10 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         guard let project else { return }
         self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: [:]))
     }
+    func removeVideo(_ id: String) async throws {
+        guard let project else { return }
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_remove_video", id: project.id, query: [URLQueryItem(name: "video", value: id)], body: [:]))
+    }
     func delete() async throws {
         guard let project else { return }
         _ = try await request("dataset_delete", id: project.id, body: [:])

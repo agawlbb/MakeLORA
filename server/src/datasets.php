@@ -60,9 +60,16 @@ function datasetClip(array $clip,array $project): array {
     return ['id'=>$id,'videoID'=>$video,'start'=>(float)$start,'end'=>(float)$end,'caption'=>$caption,'crop'=>$crop];
 }
 function datasetSigningKey(): string {
+    $path=driveRoot().'/dataset-signing-key';
+    // The key is immutable: playback must not wait for Google's token-refresh lock.
+    if (is_file($path)) return file_get_contents($path);
     return driveLock(static function() {
         $path=driveRoot().'/dataset-signing-key';
-        if (!is_file($path)) { file_put_contents($path,bin2hex(random_bytes(32)),LOCK_EX);chmod($path,0600); }
+        if (!is_file($path)) {
+            $temporary=tempnam(driveRoot(),'.signing-');
+            try { chmod($temporary,0600);file_put_contents($temporary,bin2hex(random_bytes(32)));if (!rename($temporary,$path)) throw new RuntimeException('Preview signing unavailable.'); }
+            finally { if (is_file($temporary)) unlink($temporary); }
+        }
         return file_get_contents($path);
     });
 }
@@ -127,11 +134,12 @@ function datasetsAPI(string $action,array $device): never {
             $connection=driveRead()['connection'] ?? null;
             if (!$connection) throw new InvalidArgumentException('Connect Google Drive on the server website first.');
             $p=datasetUpdate($id,static function(&$p) use ($ids,$connection,$device) {
-                if (count($p['videos'])+count($ids)>500) throw new InvalidArgumentException('A dataset supports up to 500 source videos.');
                 foreach (array_unique($ids) as $file) {
                     $existing=array_filter($p['videos'],static fn($v)=>$v['driveID']===$file && $v['status']!=='failed' && $v['connection']===$connection);
                     if ($existing) continue;
-                    $video=bin2hex(random_bytes(16));
+                    $failed=array_filter($p['videos'],static fn($v)=>$v['driveID']===$file && $v['status']==='failed');
+                    if (!$failed && count($p['videos'])>=500) throw new InvalidArgumentException('A dataset supports up to 500 source videos.');
+                    $video=$failed ? array_key_first($failed) : bin2hex(random_bytes(16));
                     $p['videos'][$video]=['id'=>$video,'driveID'=>$file,'connection'=>$connection,'device'=>$device['id'],'name'=>'Drive video','status'=>'queued','error'=>null];
                 }
             });jsonResponse(datasetPublic($p,$device['id']),202);
@@ -147,6 +155,18 @@ function datasetsAPI(string $action,array $device): never {
                 $p['name']=datasetName($body['name'] ?? null);$p['clips']=$validated;$p['revision']++;
                 if ($p['exportStatus']==='ready') $p['exportStatus']='none';
             });jsonResponse(datasetPublic($p,$device['id']));
+        }
+        if ($action==='dataset_remove_video' && $method==='POST') {
+            $video=datasetID($_GET['video'] ?? null);
+            $p=datasetUpdate($id,static function(&$p) use ($video) {
+                if (!isset($p['videos'][$video])) throw new InvalidArgumentException('Source video no longer exists.');
+                if ($p['videos'][$video]['status']==='processing' || $p['exportStatus']==='processing') throw new InvalidArgumentException('Wait for processing to finish before removing a source video.');
+                unset($p['videos'][$video]);
+                $p['clips']=array_filter($p['clips'],static fn($clip)=>$clip['videoID']!==$video);
+                $p['revision']++;$p['exportStatus']='none';$p['exportError']=null;
+            });
+            $directory=datasetPath($id).'/'.$video;if (is_dir($directory)) datasetRemoveTree($directory);
+            jsonResponse(datasetPublic($p,$device['id']));
         }
         if ($action==='dataset_export' && $method==='POST') {
             $p=datasetUpdate($id,static function(&$p) use ($device) {
