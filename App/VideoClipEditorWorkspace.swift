@@ -48,7 +48,7 @@ struct VideoClipEditorWorkspace: View {
                 } else {
                     VStack(spacing: 0) {
                         previewPane.padding(.horizontal, 12).padding(.top, 8)
-                            .frame(height: min(max(210, geometry.size.height*0.50), geometry.size.width/sourceAspect+160))
+                            .frame(height: min(max(210, geometry.size.height*0.60), geometry.size.width/sourceAspect+160))
                         Divider()
                         controls.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }

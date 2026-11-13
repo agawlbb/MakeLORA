@@ -65,6 +65,7 @@ jobs:
       - name: Test video editing rules and core project behavior
         run: swift test
       - name: Check iOS source types without producing an app build
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail

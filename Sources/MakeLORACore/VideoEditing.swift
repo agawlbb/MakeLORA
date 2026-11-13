@@ -37,11 +37,13 @@ public struct VideoEditingSession: Sendable {
     }
     public mutating func setStart(_ time: Double) {
         guard time.isFinite, let selected else { return }
-        edit { $0.start = min(max(0, time), max(0, selected.end - minimumLength)) }
+        let value = min(max(0, time), max(0, selected.end - minimumLength))
+        edit { $0.start = value }
     }
     public mutating func setEnd(_ time: Double) {
         guard time.isFinite, let selected else { return }
-        edit { $0.end = min(duration, max(selected.start + minimumLength, time)) }
+        let value = min(duration, max(selected.start + minimumLength, time))
+        edit { $0.end = value }
     }
     @discardableResult public mutating func add(at time: Double, fallbackToBeginning: Bool = true) -> Bool {
         guard time.isFinite, duration > 0 else { return false }
