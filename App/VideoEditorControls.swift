@@ -70,6 +70,7 @@ func videoEditorTime(_ time: Double) -> String {
 struct VideoEditorTimeline: View {
     let media: VideoEditorMedia
     let duration: Double
+    let hasSelection: Bool
     @Binding var start: Double
     @Binding var end: Double
     @Binding var position: Double
@@ -77,9 +78,13 @@ struct VideoEditorTimeline: View {
     var body: some View {
         VStack(spacing: 4) {
             HStack {
-                Text("Start \(videoEditorTime(start))").foregroundStyle(.yellow)
-                Spacer()
-                Text("End \(videoEditorTime(end))").foregroundStyle(.orange)
+                if hasSelection {
+                    Text("Start \(videoEditorTime(start))").foregroundStyle(.yellow)
+                    Spacer()
+                    Text("End \(videoEditorTime(end))").foregroundStyle(.orange)
+                } else {
+                    Text("Source video"); Spacer(); Text(videoEditorTime(duration))
+                }
             }.font(.caption.monospacedDigit())
             GeometryReader { geometry in
                 let width = max(1, geometry.size.width - padding*2)
@@ -87,15 +92,17 @@ struct VideoEditorTimeline: View {
                     thumbnails.frame(width: width, height: 70).clipped().offset(x: padding, y: 5)
                         .contentShape(Rectangle())
                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("videoEditorTimeline")).onChanged { value in position = min(duration, max(0, (value.location.x-padding)/width*duration)) })
+                    if hasSelection {
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*start/duration, height: 70).offset(x: padding, y: 5).allowsHitTesting(false)
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*(1-end/duration), height: 70).offset(x: padding+width*end/duration, y: 5).allowsHitTesting(false)
                     Rectangle().stroke(.yellow, lineWidth: 2).frame(width: max(1, width*(end-start)/duration), height: 70).offset(x: padding+width*start/duration, y: 5).allowsHitTesting(false)
-                    Rectangle().fill(.white).frame(width: 2, height: 80).offset(x: padding+width*min(duration,max(0,position))/duration-1).allowsHitTesting(false)
                     handle("Start", time: $start, color: .yellow, y: 20, width: width)
                     handle("End", time: $end, color: .orange, y: 60, width: width)
+                    }
+                    Rectangle().fill(.white).frame(width: 2, height: 80).offset(x: padding+width*min(duration,max(0,position))/duration-1).allowsHitTesting(false)
                 }.coordinateSpace(name: "videoEditorTimeline")
             }.frame(height: 80)
-            Text("Drag yellow Start or orange End. Tap the pictures to move the white playhead.").font(.caption2).foregroundStyle(.secondary)
+            Text(hasSelection ? "Drag yellow Start or orange End. Tap the pictures to move the white playhead." : "Tap the pictures to choose a starting point, then select Add clip.").font(.caption2).foregroundStyle(.secondary)
         }
     }
     private var thumbnails: some View {

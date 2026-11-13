@@ -102,7 +102,7 @@ struct VideoClipEditorWorkspace: View {
                 }.accessibilityLabel(previewCrop ? "Cropped video preview" : "Source video preview")
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             playbackButtons
-            VideoEditorTimeline(media: media, duration: duration, start: startBinding, end: endBinding, position: positionBinding)
+            VideoEditorTimeline(media: media, duration: duration, hasSelection: selected != nil, start: startBinding, end: endBinding, position: positionBinding)
         }
     }
     private var playbackButtons: some View {
