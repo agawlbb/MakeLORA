@@ -86,13 +86,21 @@ struct ProjectSummary: Identifiable {
     func update(_ edit: (inout Project) -> Void) {
         guard var value = project, let directory else { return }
         edit(&value)
-        do {
-            try value.validate()
-            try JSONEncoder().encode(value).write(to: directory.appendingPathComponent("project.json"), options: .atomic)
-            project = value
-            projects = projects.map { $0.id == value.id ? ProjectSummary(id: value.id, name: value.name, count: value.sampleCount, model: value.model) : $0 }
-            scheduleGeneration()
-        } catch { report("Save project changes", error) }
+        do { try persistProject(value, directory: directory) }
+        catch { report("Save project changes", error) }
+    }
+    private func persistProject(_ value: Project, directory: URL) throws {
+        try value.validate()
+        try JSONEncoder().encode(value).write(to: directory.appendingPathComponent("project.json"), options: .atomic)
+        project = value
+        projects = projects.map { $0.id == value.id ? ProjectSummary(id: value.id, name: value.name, count: value.sampleCount, model: value.model) : $0 }
+        scheduleGeneration()
+    }
+    func saveVideoEdits(projectID: UUID, videoID: UUID, baseline: [VideoEditingClip], edited: [VideoEditingClip]) throws -> VideoEditSaveResult {
+        guard var project, project.id == projectID, let directory else { throw ProjectError.invalid("The project is no longer open.") }
+        let result = try project.saveVideoEdits(video: videoID, baseline: baseline, edited: edited)
+        try persistProject(project, directory: directory)
+        return result
     }
     func editPair(_ id: Int, _ edit: (inout ImagePair) -> Void) {
         update { value in if let index = value.pairs.firstIndex(where: { $0.id == id }) { edit(&value.pairs[index]) } }

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import MakeLORACore
 
 struct ServerDatasetSummary: Decodable, Identifiable {
     let id: String
@@ -152,6 +153,24 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         else { clips.append(clip) }
         try await save(clips, revision: latest.revision)
     }
+    func saveSourceClips(projectID: String, videoID: String, baseline: [VideoEditingClip], edited: [VideoEditingClip]) async throws -> VideoEditSaveResult {
+        let latest = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset", id: projectID))
+        guard project?.id == projectID, latest.videos.contains(where: { $0.id == videoID && $0.status == "ready" }) else { throw URLError(.resourceUnavailable) }
+        let source = latest.clips.filter { $0.videoID == videoID }
+        let merged = try VideoClipChanges.merge(baseline: baseline, edited: edited, current: source.map(\.editorClip))
+        let replacements = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
+        var clips = latest.clips.compactMap { clip -> ServerDatasetClip? in
+            guard clip.videoID == videoID else { return clip }
+            return replacements[clip.id].map { ServerDatasetClip(editor: $0, videoID: videoID) }
+        }
+        let previous = Set(source.map(\.id))
+        clips += merged.filter { !previous.contains($0.id) }.map { ServerDatasetClip(editor: $0, videoID: videoID) }
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(clips))
+        let saved = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: projectID, body: ["name": latest.name, "revision": latest.revision, "clips": encoded]))
+        guard project?.id == projectID else { throw CancellationError() }
+        project = saved
+        return VideoEditSaveResult(clips: saved.clips.filter { $0.videoID == videoID }.map(\.editorClip))
+    }
     func export() async throws {
         guard let project else { return }
         self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: [:]))
@@ -164,5 +183,14 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         guard let project else { return }
         _ = try await request("dataset_delete", id: project.id, body: [:])
         self.project = nil; try await refresh()
+    }
+}
+
+extension ServerDatasetClip {
+    var editorClip: VideoEditingClip {
+        VideoEditingClip(id: id, start: start, end: end, caption: caption, crop: crop.map { Crop(x: $0.x, y: $0.y, width: $0.width, height: $0.height) } ?? .full)
+    }
+    init(editor: VideoEditingClip, videoID: String) {
+        self.init(id: editor.id, videoID: videoID, start: editor.start, end: editor.end, caption: editor.caption, crop: editor.crop == .full ? nil : ServerDatasetCrop(x: editor.crop.x, y: editor.crop.y, width: editor.crop.width, height: editor.crop.height))
     }
 }

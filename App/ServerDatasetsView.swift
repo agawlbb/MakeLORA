@@ -122,6 +122,9 @@ private struct ServerDatasetWorkspace: View {
                             Button("Retry import") { Task { await store.perform { try await store.importVideos([video.driveID]) } } }
                         }
                         if video.status == "ready", let duration = video.duration {
+                            if let clip = project.clips.first(where: { $0.videoID == video.id }) {
+                                Button("Edit source clips") { editing = clip }
+                            }
                             Button("Add another clip") { editing = ServerDatasetClip(id: ServerDatasetClip.identifier(), videoID: video.id, start: 0, end: duration, caption: "", crop: nil) }
                         }
                     }
@@ -149,7 +152,7 @@ private struct ServerDatasetWorkspace: View {
             } label: { Image(systemName: "ellipsis.circle") }
         }
         .sheet(isPresented: $drive) { DriveBrowserView(store: store) }
-        .sheet(item: $editing) { clip in
+        .fullScreenCover(item: $editing) { clip in
             if let video = project.videos.first(where: { $0.id == clip.videoID }) {
                 ServerClipEditor(store: store, project: project, video: video, initial: clip)
             }

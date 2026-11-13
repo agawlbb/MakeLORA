@@ -62,6 +62,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+      - name: Test video editing rules and core project behavior
+        run: swift test
       - name: Check iOS source types without producing an app build
         shell: bash
         run: |

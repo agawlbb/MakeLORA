@@ -85,6 +85,45 @@ The server needs its own dedicated Google OAuth client and a background dataset
 worker. All approved devices share the connected Drive account and datasets.
 See [server setup and limits](server/README.md#google-drive-and-server-video-datasets).
 
+## Video clip editor
+
+Local and server video editors open full-screen. In landscape on an iPad, the
+preview/timeline and editing controls sit side by side. In portrait, the preview
+and timeline stay above a separate scrolling control panel, including while the
+caption keyboard is open. Playback, the playhead and both trim handles remain
+visible. **Trim**, **Crop**, **Caption** and **Clips** switch the control panel.
+
+The yellow Start and orange End handles share a fixed full-source timeline.
+Moving one never changes the other endpoint. Tap/drag the pictures or use the
+source scrubber to move the white playhead without changing the trim. Exact time
+fields, ±0.1-second adjustments, and **Set start here / Set end here** provide fine
+control. Playback stops at the selected clip's end; seeking can inspect the entire
+source. Very short selections use vertically separated Start/End hit targets.
+
+In **Crop**, drag a yellow corner to resize the rectangle, then drag inside to
+move it. The shaded area is excluded. Free, Original, Square, 16:9 and 9:16 shapes
+use source-image coordinates rather than letterboxed player bounds. **Preview
+crop** shows the retained area at the proper aspect ratio; **Reset crop** restores
+the full frame. The output size is shown at 480p. Each clip's crop applies to all
+of its frames independently from other clips.
+
+**Add clip** makes a short selection at the playhead. **Save and add another clip**
+saves all current drafts, then starts the next selection at the selected clip's
+end (up to five seconds initially). At the source end, move the playhead back to
+add an overlapping clip. The **Clips** tab lists all clips for that source, lets
+you switch without losing drafts, duplicate settings/captions, or remove a clip.
+A source remains available even after its last clip is removed. Local datasets
+now also list source videos as direct editor entry points.
+
+Edits are drafts until **Save all** or **Save and add another clip**. **Done** offers
+to save or discard unsaved changes. Saved clips retain separate trim/crop/caption
+settings. Save preserves unrelated concurrent server changes and rejects a
+conflicting edit or deletion instead of overwriting it. Temporary local clip IDs
+map to stable numbered export IDs only when saved; source ordering and existing
+export numbers are preserved. Export includes every saved clip as matching
+MP4/TXT files. This editor update uses the existing server API; a new app release
+is required, with no server deployment or schema migration for the redesign.
+
 ## Development
 
 On a Mac with Xcode and XcodeGen:
