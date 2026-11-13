@@ -26,8 +26,11 @@ function datasetFolderStage(string $project): string {
         if (preg_match('/^\.makelora-[a-f0-9]{32}-[a-f0-9]{32}$/D',basename($old)) && is_dir($old) && !is_link($old)) datasetRemoveTree($old);
     }
     $path=$root.'/.makelora-'.$project.'-'.bin2hex(random_bytes(16));
-    if (!mkdir($path,02700)) throw new RuntimeException('Could not create the FileBrowser export folder. Check available storage and permissions.');
-    chmod($path,02700);return $path;
+    if (!mkdir($path,0700)) throw new RuntimeException('Could not create the FileBrowser export folder. Check available storage and permissions.');
+    // Preserve the group/setgid bit inherited from the publication root.
+    // Reapplying setgid outside that group silently clears it on Linux.
+    if (filegroup($path)!==filegroup(datasetFolderRoot())) { datasetRemoveTree($path);throw new RuntimeException('The FileBrowser export directory did not inherit its storage group. Ask the administrator to check the directory permissions.'); }
+    return $path;
 }
 function datasetFolderFile(string $source,string $destination): void {
     if (!is_file($source) || is_link($source) || !copy($source,$destination)) throw new RuntimeException('Could not copy a rendered clip to FileBrowser. Check storage and retry the export.');
@@ -67,10 +70,9 @@ function datasetPublishFolder(string $stage,array $p): string {
         if (file_exists($target) || is_link($target)) continue;
         // Reserve a fresh empty directory exclusively. Rename replaces only our reservation;
         // if someone adds files meanwhile, rename fails and those files remain untouched.
-        if (!@mkdir($target,02700)) { if (file_exists($target)) continue;throw new RuntimeException('Could not reserve a FileBrowser export folder. Check its permissions.'); }
-        chmod($target,02700);
+        if (!@mkdir($target,0700)) { if (file_exists($target)) continue;throw new RuntimeException('Could not reserve a FileBrowser export folder. Check its permissions.'); }
         if (!rename($stage,$target)) { @rmdir($target);throw new RuntimeException('Could not publish the completed FileBrowser dataset folder. Retry the export.'); }
-        if (!chmod($target,02770)) throw new RuntimeException('The dataset was copied but its FileBrowser permissions could not be set. Ask the server administrator to check the export folder.');
+        if (!chmod($target,0770)) throw new RuntimeException('The dataset was copied but its FileBrowser permissions could not be set. Ask the server administrator to check the export folder.');
         return $name;
     }
     throw new RuntimeException('Could not choose an unused dataset folder name. Rename the dataset and export again.');

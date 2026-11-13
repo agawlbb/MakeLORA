@@ -274,7 +274,7 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual((folder / '1.mp4').read_bytes(), (ROOT / 'tests/fixtures/wan-output.mp4').read_bytes())
         self.assertEqual((folder / '1.txt').read_text(), clip['caption'])
         self.assertEqual((folder / '1.txt').stat().st_mode & 0o777, 0o660)
-        self.assertEqual(folder.stat().st_mode & 0o7777, 0o2770)
+        self.assertEqual(folder.stat().st_mode & 0o7777, 0o770)
         with self.request(old_url, auth=False) as reply:
             self.assertEqual(reply.status, 404)
         (folder / 'keep-my-file').write_text('User file')

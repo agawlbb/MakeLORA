@@ -572,7 +572,7 @@ Only metadata and previews travel to the device.
 Publication stages privately (mode 2700) under the scoped root and publishes the
 completed folder under the dataset name. Existing names get `-r<revision>` and,
 if necessary, a unique suffix. Existing files/folders are never replaced or
-pruned. Exported directories are mode 2770 and files 0660, inheriting group 1000
+pruned. Exported directories are mode 0770 and files 0660, inheriting group 1000
 for FileBrowser access. The managed root cannot be renamed/tampered with by the
 FileBrowser process; files inside published folders follow FileBrowser's existing
 account permissions. Old snapshots remain after edits or project deletion and
