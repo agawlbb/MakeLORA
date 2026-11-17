@@ -147,7 +147,7 @@ Licensed under the repository's GPL license. Release scripts and workflow struct
 Projects → **Server** can scan or paste a pairing invitation from a configured
 HTTPS pairing service. Confirm the matching code on its management page, then
 check status in the app. Connections are saved in device-only Keychain storage.
-The management website at https://coffeybean.com/MakeLORA/ uses the existing
+The management website at https://joe.coffeybean.com/MakeLORA/ uses the existing
 VPS sign-in. It lists privately stored model files and inspection metadata and
 stores a persistent Replicate token for server-side paired-device operations.
 The **Datasets** and **Generation** tabs switch between dataset preparation and

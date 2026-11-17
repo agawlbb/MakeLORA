@@ -1,6 +1,7 @@
 # MakeLORA server
 
-The default deployment target is **https://coffeybean.com/MakeLORA/** in
+The management website is **https://joe.coffeybean.com/MakeLORA/**; the device
+API base is **https://coffeybean.com/MakeLORA**. The deployment lives in
 `/opt/services/shared-frontend`, using the existing frontend container. Deploy to
 the VPS only when explicitly requested. The VM remains the development workspace.
 
@@ -417,8 +418,8 @@ inventory. They are not web-accessible. Do not create another backup job.
 
 1. Enable the Google Drive API in a dedicated Google Cloud project. Configure
    an OAuth consent screen and a **Web application** OAuth client. Register the
-   exact redirect `https://coffeybean.com/MakeLORA/drive.php` (or your configured
-   `base_url` plus `/drive.php`). Download the Web client JSON and upload it through
+   exact redirect `https://joe.coffeybean.com/MakeLORA/drive.php` (or your configured
+   `browser_base_url` plus `/drive.php`). Download the Web client JSON and upload it through
    **Google Drive connection → Upload client JSON** on the authenticated server
    website. The server validates the client type/redirect, stores only client ID
    and secret privately, and never echoes the secret. Existing private settings
@@ -585,18 +586,18 @@ frontend data backup capture. No new backup/cleanup schedule is installed.
 ### Separate browser and device hostnames
 
 Use `base_url=https://coffeybean.com/MakeLORA` for new device invitations,
-downloads and callbacks. Use `browser_base_url=https://coffeybean.com/MakeLORA`
-for Drive OAuth, or omit it to inherit `base_url`. A separately configured browser
-hostname is optional. Register the exact browser URL plus `/drive.php` with
+downloads and callbacks. Keep `browser_base_url=https://joe.coffeybean.com/MakeLORA`
+for Drive OAuth and protected browser management. The apex exposes only the device
+API, so this deployment requires the separate browser hostname. Register the exact browser URL plus `/drive.php` with
 the existing Google Web client. Until registration is confirmed, set
 `google_drive_redirect_ready=false`; new consent is blocked with recovery steps,
 while the existing connected account and refresh tokens are preserved. Set it
 to true after registration.
 
 When deploying the hostname change, update the private production settings above
-and shared frontend routing/sign-in configuration in `vps_admin`. Authorize
-`https://coffeybean.com/MakeLORA/drive.php` in the existing Google Web client
-before enabling new consent. Preserve the existing Drive account and refresh tokens.
+and verify shared frontend routing/sign-in configuration in `vps_admin`. Keep
+`https://joe.coffeybean.com/MakeLORA/drive.php` authorized in the existing Google Web client. The Joe redirect is already registered;
+retiring the former VPS subdomain does not require changing Google OAuth. Preserve the existing Drive account and refresh tokens.
 The deployment script preserves private settings, so deploying source alone does
 not update these URLs.
 
