@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix='makelora-production-test-') as temporar
     config = root / 'settings.php'
     config.write_text("<?php $c=require '/home/dev/projects/.test-config/makelora.php'; "
                       "$c['environment']='production'; $c['open_management']=false; "
-                      "$c['base_url']='https://vps.coffeybean.com/MakeLORA'; "
+                      "$c['base_url']='https://coffeybean.com/MakeLORA'; "
                       f"$c['private_session_directory']='{private}'; return $c;")
     router = root / 'router.php'
     router.write_text((source / 'deploy/gateway.php').read_text()

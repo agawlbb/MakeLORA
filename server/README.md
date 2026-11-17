@@ -1,8 +1,8 @@
 # MakeLORA server
 
-The default deployment target is **https://vps.coffeybean.com/MakeLORA/** in
+The default deployment target is **https://coffeybean.com/MakeLORA/** in
 `/opt/services/shared-frontend`, using the existing frontend container. Deploy to
-the VM only when explicitly requested. The VM remains the development workspace.
+the VPS only when explicitly requested. The VM remains the development workspace.
 
 Management requires the existing Firebase sign-in and current `vps_access` claim.
 The shared gateway enforces sign-in even for CSS. Device requests use only the
@@ -32,7 +32,7 @@ Public hosting contains only the gateway and rewrite rules under
 `private/makelora/app`, outside the document root. The existing private read-only
 mount exposes settings at `/run/site-private/makelora/settings.php`. Configure
 `environment=production`, `open_management=false`, and
-`base_url=https://vps.coffeybean.com/MakeLORA`. Shared sign-in is checked before
+`base_url=https://coffeybean.com/MakeLORA`. Shared sign-in is checked before
 management database access. Errors and request logs must never contain token
 values, Authorization headers or POST bodies.
 
@@ -417,7 +417,7 @@ inventory. They are not web-accessible. Do not create another backup job.
 
 1. Enable the Google Drive API in a dedicated Google Cloud project. Configure
    an OAuth consent screen and a **Web application** OAuth client. Register the
-   exact redirect `https://vps.coffeybean.com/MakeLORA/drive.php` (or your configured
+   exact redirect `https://coffeybean.com/MakeLORA/drive.php` (or your configured
    `base_url` plus `/drive.php`). Download the Web client JSON and upload it through
    **Google Drive connection → Upload client JSON** on the authenticated server
    website. The server validates the client type/redirect, stores only client ID
@@ -584,11 +584,26 @@ frontend data backup capture. No new backup/cleanup schedule is installed.
 
 ### Separate browser and device hostnames
 
-For the Joe hostname migration, keep `base_url=https://vps.coffeybean.com/MakeLORA`
-for existing devices, invitation QR codes, downloads and callbacks. Set
-`browser_base_url=https://joe.coffeybean.com/MakeLORA` for Drive OAuth. It defaults
-to `base_url` when omitted. Register the exact browser URL plus `/drive.php` with
+Use `base_url=https://coffeybean.com/MakeLORA` for new device invitations,
+downloads and callbacks. Use `browser_base_url=https://coffeybean.com/MakeLORA`
+for Drive OAuth, or omit it to inherit `base_url`. A separately configured browser
+hostname is optional. Register the exact browser URL plus `/drive.php` with
 the existing Google Web client. Until registration is confirmed, set
 `google_drive_redirect_ready=false`; new consent is blocked with recovery steps,
 while the existing connected account and refresh tokens are preserved. Set it
-to true after registration. No device/mobile build or re-pairing is required.
+to true after registration.
+
+When deploying the hostname change, update the private production settings above
+and shared frontend routing/sign-in configuration in `vps_admin`. Authorize
+`https://coffeybean.com/MakeLORA/drive.php` in the existing Google Web client
+before enabling new consent. Preserve the existing Drive account and refresh tokens.
+The deployment script preserves private settings, so deploying source alone does
+not update these URLs.
+
+Existing paired devices retain their saved server URL. Changing `base_url` affects
+new invitations, not those saved URLs. Before retiring the former VPS subdomain,
+migrate or re-pair devices that still use it; a redirect cannot provide continuity
+once its DNS/TLS service is removed. Keep the separate legacy VM device API
+compatibility route described above. No mobile app build is required because the
+server URL comes from pairing. Existing provider jobs may also retain callback or
+download URLs on the former hostname; allow those jobs to finish before retirement.
