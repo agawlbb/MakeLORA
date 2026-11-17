@@ -581,3 +581,14 @@ requesting devices prevent publication; failed/partial copies are removed, and
 a restarted job removes only its own hidden crash leftovers. Published data counts
 toward the existing dataset storage budget and is included in the existing shared
 frontend data backup capture. No new backup/cleanup schedule is installed.
+
+### Separate browser and device hostnames
+
+For the Joe hostname migration, keep `base_url=https://vps.coffeybean.com/MakeLORA`
+for existing devices, invitation QR codes, downloads and callbacks. Set
+`browser_base_url=https://joe.coffeybean.com/MakeLORA` for Drive OAuth. It defaults
+to `base_url` when omitted. Register the exact browser URL plus `/drive.php` with
+the existing Google Web client. Until registration is confirmed, set
+`google_drive_redirect_ready=false`; new consent is blocked with recovery steps,
+while the existing connected account and refresh tokens are preserved. Set it
+to true after registration. No device/mobile build or re-pairing is required.

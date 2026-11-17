@@ -2,6 +2,15 @@
 declare(strict_types=1);
 
 // A dedicated, server-owned read-only Google connection. Never sent to devices.
+// Browser management may use a different origin from device APIs/callbacks.
+function driveRedirectUri(): string {
+    global $config;
+    return rtrim($config['browser_base_url'] ?? $config['base_url'],'/').'/drive.php';
+}
+function driveRedirectReady(): bool {
+    global $config;
+    return ($config['google_drive_redirect_ready'] ?? true) === true;
+}
 function driveRoot(): string {
     global $config;
     static $verified=null;
@@ -31,7 +40,7 @@ function driveSaveClient(array $download,bool $replace): void {
     if (!is_array($web)) throw new InvalidArgumentException('Choose the JSON downloaded for your Google Web application client. Desktop client files are not supported.');
     $id=$web['client_id'] ?? null;$secret=$web['client_secret'] ?? null;
     if (!is_string($id) || !preg_match('/^[a-zA-Z0-9._-]{1,512}\.apps\.googleusercontent\.com$/D',$id) || !is_string($secret) || !preg_match('/^[\x21-\x7e]{1,512}$/D',$secret)) throw new InvalidArgumentException('The JSON is missing a valid Google client ID or secret. Download the Web application client JSON again.');
-    $redirect=rtrim($config['base_url'],'/').'/drive.php';
+    $redirect=driveRedirectUri();
     if (!is_array($web['redirect_uris'] ?? null) || !in_array($redirect,$web['redirect_uris'],true)) throw new InvalidArgumentException('The Google client is missing this server’s exact redirect URI. Add the URI shown below in Google, then download the JSON again.');
     driveLock(static function() use ($id,$secret,$replace) {
         if ((driveConfigured() || driveRead()!==null) && !$replace) throw new InvalidArgumentException('Confirm replacement before changing existing Google client settings.');

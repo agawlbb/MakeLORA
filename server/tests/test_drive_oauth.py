@@ -30,6 +30,8 @@ class DriveOAuthTests(unittest.TestCase):
         bootstrap.write_text('''<?php
         $config=['private_session_directory'=>%s,'base_url'=>'https://fixture.invalid/MakeLORA','google_drive_client_id'=>'synthetic-client','google_drive_client_secret'=>'synthetic-secret'];
         if (is_file($config['private_session_directory'].'/unconfigured')) { unset($config['google_drive_client_id'],$config['google_drive_client_secret']); }
+        if (is_file($config['private_session_directory'].'/browser-url')) { $config['browser_base_url']='https://joe.fixture.invalid/MakeLORA'; }
+        if (is_file($config['private_session_directory'].'/redirect-pending')) { $config['google_drive_redirect_ready']=false; }
         header('Cache-Control: no-store');header('Referrer-Policy: no-referrer');
         function escape(string $s): string { return htmlspecialchars($s,ENT_QUOTES,'UTF-8'); }
         ''' % json.dumps(str(private)))
@@ -52,6 +54,8 @@ class DriveOAuthTests(unittest.TestCase):
 
     def setUp(self):
         (self.private / 'unconfigured').unlink(missing_ok=True)
+        (self.private / 'browser-url').unlink(missing_ok=True)
+        (self.private / 'redirect-pending').unlink(missing_ok=True)
         (self.private / 'google-drive-client.json').unlink(missing_ok=True)
         (self.private / 'google-drive.json').unlink(missing_ok=True)
 
@@ -166,6 +170,31 @@ class DriveOAuthTests(unittest.TestCase):
         self.assertNotIn('code_verifier', params)
         self.assertNotIn('client_secret', params)
         self.assertFalse((self.private / 'google-drive.json').exists())
+
+    def test_browser_origin_is_separate_from_stable_api_origin(self):
+        (self.private / 'browser-url').touch()
+        cookie, csrf = self.session()
+        status, headers, page = self.request(body={'action':'connect','csrf':csrf},cookie=cookie)
+        self.assertEqual(status,303)
+        self.assertEqual(parse_qs(urlsplit(headers['Location']).query)['redirect_uri'],['https://joe.fixture.invalid/MakeLORA/drive.php'])
+        download=self.client_download()
+        self.assertEqual(self.upload(cookie,csrf,download)[0],400)
+        download['web']['redirect_uris']=['https://joe.fixture.invalid/MakeLORA/drive.php']
+        self.assertEqual(self.upload(cookie,csrf,download)[0],303)
+
+    def test_pending_redirect_blocks_consent_without_removing_connection(self):
+        (self.private / 'browser-url').touch()
+        (self.private / 'redirect-pending').touch()
+        saved=self.private / 'google-drive.json'
+        saved.write_text('{"connection":"synthetic-account","refresh_token":"synthetic-refresh"}')
+        original=saved.read_bytes()
+        cookie,csrf=self.session()
+        status,headers,page=self.request(body={'action':'connect','csrf':csrf},cookie=cookie)
+        self.assertNotEqual(status,303)
+        self.assertNotIn('Location',headers)
+        self.assertIn('register',page)
+        self.assertIn('https://joe.fixture.invalid/MakeLORA/drive.php',page)
+        self.assertEqual(saved.read_bytes(),original)
 
     def test_callback_rejects_wrong_state_and_is_single_use(self):
         cookie, csrf = self.session()

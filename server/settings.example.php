@@ -4,6 +4,10 @@ return [
  'environment'=>'prototype',
  'open_management'=>true,
  'base_url'=>'https://your-test-host.example/makelora',
+ // Optional browser origin, separate from the stable device/callback base_url.
+ 'browser_base_url'=>'https://your-test-host.example/makelora',
+ // Set false while registering browser_base_url + /drive.php with Google.
+ 'google_drive_redirect_ready'=>true,
  'dsn'=>'mysql:host=database;dbname=makelora_test;charset=utf8mb4',
  'user'=>'makelora_test',
  'password'=>'configure-outside-git',
@@ -12,7 +16,7 @@ return [
  // Never serve this path. Session expiry does not remove the provider token.
  // Required for Wan video validation; PHP must permit proc_open.
  // Dedicated Google OAuth web client; configure privately, never in the app.
- // Register base_url + /drive.php as its exact authorized redirect URI.
+ // Register browser_base_url (or base_url) + /drive.php as its exact authorized redirect URI.
  'google_drive_client_id'=>'',
  'google_drive_client_secret'=>'',
  'ffmpeg_binary'=>'/usr/bin/ffmpeg',

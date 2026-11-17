@@ -11,7 +11,7 @@ try {
     // Lax allows the top-level OAuth callback from Google to retain its state cookie.
     session_set_cookie_params(['secure'=>true,'httponly'=>true,'samesite'=>'Lax','path'=>parse_url($config['base_url'],PHP_URL_PATH) ?: '/']);session_start();
     $_SESSION['csrf'] ??= bin2hex(random_bytes(32));
-    $redirect=rtrim($config['base_url'],'/').'/drive.php';
+    $redirect=driveRedirectUri();
     $notice=$_SESSION['drive_notice'] ?? '';unset($_SESSION['drive_notice']);
     if (isset($_GET['state']) || isset($_GET['code']) || isset($_GET['error'])) {
         $state=$_SESSION['oauth'] ?? [];unset($_SESSION['oauth']);
@@ -41,6 +41,7 @@ try {
             driveLock(static function() { $path=driveRoot().'/google-drive.json';if (is_file($path)) unlink($path); });
             $notice='Drive disconnected from this server. Existing server copies are retained. You can also revoke access in your Google account.';
         } elseif (($_POST['action'] ?? '')==='connect' && $configured) {
+            if (!driveRedirectReady()) throw new InvalidArgumentException('Google Drive authorization is not enabled for this hostname yet. The administrator must register '.driveRedirectUri().' with the existing Google OAuth client, then enable google_drive_redirect_ready. The connected account and its files are unchanged.');
             $verifier=bin2hex(random_bytes(32));$state=bin2hex(random_bytes(32));
             $_SESSION['oauth']=['state'=>$state,'verifier'=>$verifier,'expires'=>time()+600,'clientFingerprint'=>driveClientFingerprint()];
             $params=['client_id'=>driveClient()['client_id'],'redirect_uri'=>$redirect,'response_type'=>'code','scope'=>'https://www.googleapis.com/auth/drive.readonly','access_type'=>'offline','prompt'=>'consent','state'=>$state,'code_challenge'=>rtrim(strtr(base64_encode(hash('sha256',$verifier,true)),'+/','-_'),'='),'code_challenge_method'=>'S256'];
@@ -51,12 +52,13 @@ try {
 } catch (InvalidArgumentException $e) { http_response_code(400);$notice=$e->getMessage();$connected=driveRead()!==null; }
 catch (Throwable $e) { $notice=$e instanceof RuntimeException ? $e->getMessage() : 'Drive setup unavailable.';$connected=false; }
 ?><!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Google Drive · MakeLORA</title><link rel="stylesheet" href="style.css"><main>
+<?php if (!driveRedirectReady()): ?><p role="status">New Google Drive authorization is paused. The administrator must register <code><?=escape(driveRedirectUri())?></code> with the existing Google OAuth client, then enable <code>google_drive_redirect_ready</code>. The existing connected account remains available.</p><?php endif; ?>
 <h1>Google Drive</h1><p><a href="./">Server settings</a></p>
 <?php if ($notice): ?><p role="status"><?=escape($notice)?></p><?php endif ?>
 <?php if (isset($_SESSION['csrf'])): ?>
 <details<?=$configured ? '' : ' open'?>><summary><?=$configured ? 'Replace Google client settings' : 'Set up your Google client'?></summary>
 <p>Upload the JSON file downloaded when you created your Google Web application client. Credentials are stored privately on this server.</p>
-<p>The client must include this authorized redirect URI:</p><code><?=escape(rtrim($config['base_url'],'/').'/drive.php')?></code>
+<p>The client must include this authorized redirect URI:</p><code><?=escape(driveRedirectUri())?></code>
 <form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="<?=escape($_SESSION['csrf'])?>"><input type="hidden" name="action" value="save_client">
 <p><label>Google client JSON <input type="file" name="client_json" accept=".json,application/json" required></label></p>
 <?php if ($configured || $connected): ?><p><label><input type="checkbox" name="replace_client" value="1" required> Replace the saved client and disconnect the current Drive account. Imported datasets are kept.</label></p><?php endif ?>
