@@ -84,7 +84,10 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
         $input=fopen('php://input','rb');curl_setopt_array($curl,[CURLOPT_UPLOAD=>true,CURLOPT_CUSTOMREQUEST=>'POST',CURLOPT_INFILE=>$input,CURLOPT_INFILESIZE=>$size]);
     }
     $ok=curl_exec($curl);curl_close($curl);if (isset($input)) fclose($input);
-    if (!$sent && (!$ok||$status<200||$status>=300)) filebeansError($status,json_decode($error,true));
+    if (!$sent && (!$ok||$status<200||$status>=300)) {
+        // Upload conflicts concern the destination name, rather than a saved edit reference.
+        filebeansError($status,$upload&&$status===409 ? ['code'=>'conflict'] : json_decode($error,true));
+    }
     if (!$sent) http_response_code($status);
     exit;
 }

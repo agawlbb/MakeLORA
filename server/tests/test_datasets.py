@@ -40,6 +40,7 @@ class DatasetTests(unittest.TestCase):
                     if path == '/': return self.respond(200, {'type': 'directory', 'children': []})
                     return self.respond(200, {'name': path.rsplit('/', 1)[-1], 'path': path, 'revision': state['revision'], 'type': 'video/mp4', 'size': 123})
                 if route.path == '/v1/datasets/uploads':
+                    if path in state['uploads']: return self.respond(409, {'code': 'source_changed'})
                     state['uploads'][path] = self.rfile.read(int(self.headers['Content-Length'])); return self.respond(201, {'path': path})
                 if route.path == '/v1/datasets/activity':
                     state['activity'] += 1; return self.respond(200, {'active': True})
@@ -121,6 +122,11 @@ class DatasetTests(unittest.TestCase):
         req = urllib.request.Request(url, data=raw, headers={'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/octet-stream', 'Idempotency-Key': 'a' * 64, 'X-Content-SHA256': 'b' * 64})
         with urllib.request.urlopen(req) as r: self.assertEqual(r.status, 201)
         self.assertEqual(self.state['uploads']['/upload.mp4'], raw)
+        with self.assertRaises(urllib.error.HTTPError) as caught: urllib.request.urlopen(req)
+        self.assertEqual(caught.exception.code, 409)
+        failure = json.load(caught.exception)
+        self.assertEqual(failure['code'], 'conflict')
+        self.assertIn('another name or folder', failure['error'])
     def test_private_configuration_during_management_session(self):
         code = '<?php $config=["private_session_directory"=>%s]; require %s; datasetPrivateRoot(); session_start(); filebeansSettings(); session_write_close(); echo "OK";' % (json.dumps(str(self.private)), json.dumps(str(ROOT / 'src/filebeans.php')))
         result = subprocess.run(['php', '-d', 'display_errors=1'], input=code, text=True, capture_output=True)
