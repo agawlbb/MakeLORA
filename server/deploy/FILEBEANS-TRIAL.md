@@ -77,8 +77,9 @@ authenticated original-streaming capability/source discovery, unauthenticated
 HTTP 401, disabled dataset timer, and active generation timer. Both API and
 frontend run with zero restarts. Production test media/jobs were not created.
 
-The corrected iOS release uses `3fdbcf6`; publication evidence is recorded in
-`RELEASE.md` after Apple processing completes. Feature branches remain unmerged.
+The corrected iOS release **0.1.0 (14)** uses `3fdbcf6`. Apple processing and
+sole internal tester verification passed (**VALID / IN_BETA_TESTING**); see
+`RELEASE.md` and workflow 44613430749. Feature branches remain unmerged.
 Temporary deployment/recovery material remains at
 `/opt/services/filebeans/deploy/originals-b5c4c7f/` and
 `private/makelora/app-originals-3fdbcf6`; automatic approval review rejected their

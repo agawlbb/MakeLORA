@@ -56,3 +56,23 @@ The matching MakeLORA and FileBeans servers are deployed and their live
 connection/authentication checks pass. See
 [trial deployment and rollback](server/deploy/FILEBEANS-TRIAL.md).
 The feature branches remain unmerged pending the owner's decision.
+
+## FileBeans original-source correction — TestFlight 14 (November 19, 2026)
+
+Published **0.1.0 (14)** from `3fdbcf6` on `feature/filebeans-datasets`.
+[Publication workflow](https://github.com/agawlbb/MakeLORA/actions/runs/44613430749)
+passed simulator tests, signing, upload, Apple processing, and sole internal tester
+verification. Apple build `fe3024c0-5b7c-4caf-baa8-c2e15b8ce3ad` is **VALID /
+IN_BETA_TESTING**, with automatic internal notification enabled. No testers were
+added. Processing evidence is retained in the workflow artifact.
+
+Existing FileBeans sources register as original references without preparation,
+copies, or automatic clips. Viewing/editing streams originals; only explicit
+export encodes, trims, or crops. The workspace separates Sources, Clips/Pairs,
+and Export. Uploads and camera capture use a selected FileBeans destination.
+Protected access uses the existing mobile unlock flow and inactivity timer.
+
+Matching MakeLORA server `3fdbcf6` and FileBeans API `b5c4c7f` are deployed and
+verified. See [deployment evidence](server/deploy/FILEBEANS-TRIAL.md). Feature
+branches remain unmerged until the owner decides to retain the change. Physical
+device capture and editing acceptance remains a user check.
