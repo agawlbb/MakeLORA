@@ -93,13 +93,15 @@ function datasetClip(array $clip,array $p): array {
 }
 function datasetInput(array $v): array { return array_intersect_key($v,array_flip(['id','source','path','revision'])); }
 function datasetsAPI(string $action,array $device): never {
+    global $config;
     if ($device['status']!=='active') fail('Approve pairing on the server first.',403);
     try {
         $method=$_SERVER['REQUEST_METHOD'];
         if ($action==='dataset_connection'&&$method==='GET') {
-            if (!filebeansConfigured()) jsonResponse(['configured'=>false,'connected'=>false]);
+            $management=rtrim($config['browser_base_url'] ?? $config['base_url'],'/').'/filebeans.php';
+            if (!filebeansConfigured()) jsonResponse(['configured'=>false,'connected'=>false,'managementURL'=>$management]);
             $cap=filebeansAPI('GET','capabilities');$ready=in_array('datasetMediaV1',$cap['features'] ?? [],true);
-            jsonResponse(['configured'=>true,'connected'=>$ready,'workerReady'=>$ready]);
+            jsonResponse(['configured'=>true,'connected'=>$ready,'workerReady'=>$ready,'managementURL'=>$management]);
         }
         if ($action==='dataset_sources'&&$method==='GET') {
             $reply=filebeansAPI('GET','fs/sources');$allowed=filebeansSettings()['sources'];

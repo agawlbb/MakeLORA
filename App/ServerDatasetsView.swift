@@ -23,11 +23,30 @@ struct ServerDatasetsView: View {
                     ServerDatasetWorkspace(store: store, project: project).id(project.id)
                 } else {
                     List {
-                        if let url = store.managementURL { Link("FileBeans connection", destination: url) }
-                        if store.connection?.connected == false { Text("Configure FileBeans on your server.").foregroundStyle(.secondary) }
-                        ForEach(store.projects) { p in
-                            Button { Task { await store.perform { try await store.open(p.id) } } } label: {
-                                HStack { Label(p.name, systemImage: "rectangle.stack"); Spacer(); Text("\(p.count)").foregroundStyle(.secondary) }
+                        Section("Datasets") {
+                            Button { name = ""; create = true } label: {
+                                Label("New dataset", systemImage: "plus").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .foregroundStyle(.black)
+                            .disabled(store.connection?.connected != true)
+                            if store.projects.isEmpty {
+                                Text("Create a dataset, then import images or videos.").foregroundStyle(.secondary)
+                            }
+                            ForEach(store.projects) { p in
+                                Button { Task { await store.perform { try await store.open(p.id) } } } label: {
+                                    HStack { Label(p.name, systemImage: "rectangle.stack"); Spacer(); Text("\(p.count)").foregroundStyle(.secondary) }
+                                }
+                            }
+                        }
+                        Section {
+                            if store.connection?.connected == true {
+                                Label("FileBeans connected", systemImage: "checkmark.circle")
+                            } else if let connection = store.connection {
+                                Label(connection.configured ? "FileBeans unavailable" : "Connect FileBeans", systemImage: "externaldrive")
+                                if let url = store.managementURL { Link("FileBeans settings", destination: url) }
+                            } else {
+                                ProgressView("Checking FileBeans…")
                             }
                         }
                     }.refreshable { await store.perform { try await store.refresh() } }
@@ -40,7 +59,7 @@ struct ServerDatasetsView: View {
                     if store.project != nil { Button("Datasets", systemImage: "chevron.left") { store.project = nil; Task { await store.perform { try await store.refresh() } } } }
                     else { Button("Server", systemImage: "server.rack") { settings = true } }
                 }
-                ToolbarItem(placement: .topBarTrailing) { if store.project == nil && pairing.credential != nil { Button("New dataset", systemImage: "plus") { name = ""; create = true } } }
+                ToolbarItem(placement: .topBarTrailing) { if store.project == nil && pairing.credential != nil && !store.projects.isEmpty { Button("New dataset", systemImage: "plus") { name = ""; create = true }.disabled(store.connection?.connected != true) } }
             }
             .disabled(store.busy)
             .overlay { if store.busy { ProgressView().padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }

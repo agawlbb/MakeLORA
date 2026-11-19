@@ -89,6 +89,7 @@ struct FileBeansConnection: Decodable {
     let configured: Bool
     let connected: Bool
     let workerReady: Bool?
+    let managementURL: URL?
 }
 private struct DatasetServiceError: Decodable, LocalizedError {
     let error: String
@@ -102,7 +103,11 @@ private struct DatasetServiceError: Decodable, LocalizedError {
     @Published var busy = false
     @Published var error: String?
     private(set) var credential: DeviceCredential?
-    private let session = URLSession(configuration: .ephemeral, delegate: NoPairingRedirects(), delegateQueue: nil)
+    private let session: URLSession
+
+    init(session: URLSession? = nil) {
+        self.session = session ?? URLSession(configuration: .ephemeral, delegate: NoPairingRedirects(), delegateQueue: nil)
+    }
 
     func configure(_ value: DeviceCredential?) {
         if credential?.server != value?.server || credential?.deviceID != value?.deviceID || credential?.token != value?.token {
@@ -110,7 +115,7 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         }
         credential = value
     }
-    var managementURL: URL? { credential?.server.appendingPathComponent("filebeans.php") }
+    var managementURL: URL? { connection?.managementURL ?? credential?.server.appendingPathComponent("filebeans.php") }
     private func request(_ action: String, id: String? = nil, query: [URLQueryItem] = [], body: [String: Any]? = nil) async throws -> Data {
         guard let credential else { throw URLError(.userAuthenticationRequired) }
         var parts = URLComponents(url: credential.server.appendingPathComponent("api.php"), resolvingAgainstBaseURL: false)!

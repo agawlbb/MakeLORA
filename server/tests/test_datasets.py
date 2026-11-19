@@ -66,7 +66,7 @@ class DatasetTests(unittest.TestCase):
         cls.base = f'http://127.0.0.1:{port}'
         router = cls.root / 'router.php'
         router.write_text('''<?php
-        $config=['private_session_directory'=>%s,'base_url'=>%s];
+        $config=['private_session_directory'=>%s,'base_url'=>%s,'browser_base_url'=>'https://management.fixture.invalid/MakeLORA'];
         function fail(string $m,int $c=400): never {jsonResponse(['error'=>$m],$c);}
         function jsonResponse(array $v,int $c=200): never {http_response_code($c);header('Content-Type: application/json');echo json_encode($v);exit;}
         function query(string $s,array $p=[]): object {return new class {function fetch(){return ['id'=>str_repeat('d',32),'status'=>'active'];}};}
@@ -96,6 +96,11 @@ class DatasetTests(unittest.TestCase):
         status, p = self.api('dataset_import', {'files': [{'id': 'a' * 32, 'source': 'fixture', 'path': '/source.mp4'}]}, id=p['id']); self.assertEqual(status, 202)
         status, p = self.api('dataset', id=p['id']); self.assertEqual(status, 200); self.assertEqual(len(p['clips']), 1)
         return p
+    def test_connection_uses_configured_management_origin(self):
+        status, reply = self.api('dataset_connection')
+        self.assertEqual(status, 200)
+        self.assertTrue(reply['connected'])
+        self.assertEqual(reply['managementURL'], 'https://management.fixture.invalid/MakeLORA/filebeans.php')
     def test_metadata_only_and_render(self):
         p = self.prepared(); self.assertEqual(p['videos'][0]['duration'], 10)
         status, p = self.api('dataset_export', {'destination': {'source': 'fixture', 'path': '/'}}, id=p['id']); self.assertEqual(status, 202)
