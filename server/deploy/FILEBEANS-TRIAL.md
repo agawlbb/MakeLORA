@@ -1,8 +1,9 @@
 # FileBeans dataset trial
 
-Keep `feature/filebeans-datasets` (MakeLORA) and `feature/makelora-datasets`
-(fileBeans) unmerged until the owner decides to retain this feature. Both use
-explicit feature worktrees; the canonical main checkouts remain unchanged.
+The owner accepted this feature on November 19, 2026. MakeLORA and FileBeans
+changes are merged into `main`; deployment changes are merged into `vps_admin`'s
+default branch, `work`. The temporary feature branches and worktrees were retired.
+The sections below retain the deployment and TestFlight verification history.
 
 Runtime artifacts are under MakeLORA's ignored `build/` directory:
 

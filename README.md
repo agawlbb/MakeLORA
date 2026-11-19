@@ -66,7 +66,7 @@ playback, sharing, removal, saved settings and **Run again**. Playback and shari
 use protected temporary files that are removed afterward; gallery images remain
 in memory. See the server README for the required migration and `ffprobe` setup.
 
-## FileBeans datasets (feature trial)
+## FileBeans datasets
 
 Existing FileBeans sources are registered by their original path and revision.
 Registration creates no media copies, preparation jobs, or automatic clips.
