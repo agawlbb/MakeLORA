@@ -87,7 +87,7 @@ function datasetClip(array $clip,array $p): array {
     $result=['id'=>datasetID($clip['id'] ?? null)];$caption=$clip['caption'] ?? '';
     if (!is_string($caption)||strlen($caption)>1024*1024||!mb_check_encoding($caption,'UTF-8')) throw new InvalidArgumentException('Caption must be UTF-8 text under 1 MB.');$result['caption']=$caption;
     $fields=$p['model']==='wan' ? ['videoID'] : ['control','target'];
-    foreach ($fields as $field) { $id=datasetID($clip[$field] ?? null);if (($p['videos'][$id]['status'] ?? '')!=='ready') throw new InvalidArgumentException('Prepare the source before editing.');$result[$field]=$id; }
+    foreach ($fields as $field) { $id=datasetID($clip[$field] ?? null);if (($p['videos'][$id]['status'] ?? '')!=='ready') throw new InvalidArgumentException('Source unavailable. Reopen it to check access.');$result[$field]=$id; }
     if ($p['model']==='wan') {
         $start=$clip['start'] ?? null;$end=$clip['end'] ?? null;
         if (!isset($p['videos'][$result['videoID']]['duration'])) throw new InvalidArgumentException('Open the source details before saving a clip.');
@@ -134,7 +134,7 @@ function datasetsAPI(string $action,array $device): never {
                     $prefix=$p['model']==='wan' ? 'video/' : 'image/';if (!str_starts_with($meta['type'],$prefix)) throw new InvalidArgumentException('Choose media matching this dataset model.');
                     if (array_filter($p['videos'],static fn($v)=>$v['source']===$loc['source']&&$v['path']===$loc['path'])) continue;
                     if (count($p['videos'])>=500) throw new InvalidArgumentException('A dataset supports up to 500 sources.');
-                    $vid=datasetID($file['id'] ?? null);$p['videos'][$vid]=datasetReference($vid,$loc,$meta);$p['revision']++;
+                    $vid=datasetID($file['id'] ?? null);filebeansAPI('POST','datasets/activity',[],[$loc+['vault'=>$meta['vault'] ?? '']]);$p['videos'][$vid]=datasetReference($vid,$loc,$meta);$p['revision']++;
                     if ($p['exportStatus']==='ready') $p['exportStatus']='none';
                 }
             });jsonResponse(datasetPublic($p,$device['id']),201);
@@ -161,7 +161,7 @@ function datasetsAPI(string $action,array $device): never {
             $p=datasetUpdate($id,static function(&$p) use ($vid,$loc) {
                 if (!isset($p['videos'][$vid])) throw new InvalidArgumentException('Source missing.');
                 $meta=filebeansAPI('GET','fs/resources',$loc);if (!str_starts_with($meta['type'],$p['model']==='wan'?'video/':'image/')) throw new InvalidArgumentException('Choose matching media.');
-                $p['videos'][$vid]=datasetReference($vid,$loc,$meta)+['reviewRequired'=>true];$p['revision']++;$p['exportStatus']='none';
+                filebeansAPI('POST','datasets/activity',[],[$loc+['vault'=>$meta['vault'] ?? '']]);$p['videos'][$vid]=datasetReference($vid,$loc,$meta)+['reviewRequired'=>true];$p['revision']++;$p['exportStatus']='none';
             });jsonResponse(datasetPublic($p,$device['id']));
         }
         if ($action==='dataset_save'&&$method==='POST') {
