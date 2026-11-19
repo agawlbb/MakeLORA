@@ -56,3 +56,30 @@ intended internal tester. Apple build ID: `32dff6d2-23a1-439d-bd08-1703af037feb`
 
 Rollback restores saved images, broker binary, Compose configuration and MakeLORA
 code/gateway. FileBeans originals and published outputs remain intact.
+
+## Original-source correction — November 19, 2026
+
+Deployed FileBeans API `b5c4c7f` (`filebeans-api:b5c4c7f-originals`) and MakeLORA
+server `3fdbcf6`. The FileBeans API includes the earlier Drive fixes. Existing
+normalizer, broker, credentials, and generation services remain in place.
+
+Existing-source registration records the original path/revision only. Metadata
+inspection is read-only; content responses stream original bytes with range and
+HEAD support. No preparation jobs, preview videos, thumbnail files, or automatic
+clips are created. Old preparation jobs cannot execute. Rendering writes directly
+to the chosen output destination and occurs only on explicit dataset export.
+
+Verification passed: 23 MakeLORA server tests; FileBeans Go race suite and vet;
+original byte/range/revision checks; real FFmpeg export and recovery; protected
+local/Samba original access, locked errors, and inactivity renewal; Apple app
+validation. Live checks verified the image digest, deployed source hashes,
+authenticated original-streaming capability/source discovery, unauthenticated
+HTTP 401, disabled dataset timer, and active generation timer. Both API and
+frontend run with zero restarts. Production test media/jobs were not created.
+
+The corrected iOS release uses `3fdbcf6`; publication evidence is recorded in
+`RELEASE.md` after Apple processing completes. Feature branches remain unmerged.
+Temporary deployment/recovery material remains at
+`/opt/services/filebeans/deploy/originals-b5c4c7f/` and
+`private/makelora/app-originals-3fdbcf6`; automatic approval review rejected their
+removal to preserve recovery evidence. Earlier retained trial recovery is intact.
