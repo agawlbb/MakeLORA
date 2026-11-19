@@ -401,8 +401,9 @@ tests on macOS with the existing validation workflow; Linux has no Apple SDK.
 The feature trial uses FileBeans filesystem sources for all dataset media. The
 MakeLORA server stores only project JSON, source revisions, edit instructions,
 captions, signing material, and job/output references under its existing private
-directory. FileBeans stores originals, encrypted previews when protected, render
-scratch files, and completed training outputs. AI generation storage is unchanged.
+directory. FileBeans stores originals and completed training outputs. Temporary
+render scratch exists only during explicit export. Source registration and editing
+create no media derivatives. AI generation storage is unchanged.
 
 Deploy the matching FileBeans feature first. Its capabilities must include
 `datasetMediaV1`; its API service runs one independent durable dataset worker.
@@ -420,7 +421,7 @@ Preserve this file under the installation's existing private-data backup policy.
 The device API authenticates approved paired devices and proxies FileBeans requests.
 Media URLs remain short-lived signed URLs checked against current device access.
 All media responses are private/no-store; sources and protection state are checked
-on each request, including cached previews. API tokens are never placed in URLs.
+on each request for original bytes. API tokens are never placed in URLs.
 FileBeans uploads include a SHA-256 checksum and idempotency key; interrupted
 uploads are unpublished, and a lost successful response can be retried safely.
 The upload limit remains 2 GiB per source. Reverse proxies must allow that body
