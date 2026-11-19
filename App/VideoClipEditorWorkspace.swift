@@ -28,10 +28,10 @@ struct VideoClipEditorWorkspace: View {
     @State private var playbackError: String?
     @State private var confirmLeave = false
     @State private var confirmDelete = false
-    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
+    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, newClipCaption: String = "", refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
         self.forceSave = forceSave; self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
         var initial = VideoEditingSession(duration: duration, clips: clips, selectedID: selectedID)
-        if let time = newClipAt { initial.add(at: time) }
+        if let time = newClipAt { initial.add(at: time); initial.edit { $0.caption = newClipCaption } }
         else if initial.clips.isEmpty { initial.add(at: 0) }
         _session = State(initialValue: initial); _media = State(initialValue: media)
     }
@@ -272,7 +272,11 @@ struct VideoClipEditorWorkspace: View {
         guard let player = playback.player else { return }
         var waiting = 0
         while !Task.isCancelled {
-            if player.currentItem?.status == .failed { playbackError = "The preview could not be played. Check your connection and refresh the preview."; return }
+            if player.currentItem?.status == .failed {
+                playbackError = "The source could not be played. Check your connection and refresh its link."
+                if let activity { do { try await activity() } catch { playbackError = error.localizedDescription } }
+                return
+            }
             if player.currentItem?.status == .unknown || player.timeControlStatus == .waitingToPlayAtSpecifiedRate { waiting += 1 } else { waiting = 0 }
             if waiting == 30 { playbackError = "The preview is taking longer than expected. Check your connection or refresh its link." }
             do { try await Task.sleep(for: .seconds(1)) } catch { return }

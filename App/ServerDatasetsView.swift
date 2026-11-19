@@ -403,14 +403,14 @@ private struct DatasetSourceViewer: View {
     let video: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
-    @State private var playbackError = false
+    @State private var playbackError: String?
     @Environment(\.scenePhase) private var phase
     var body: some View {
         NavigationStack {
             Group {
                 if video {
                     VideoPlayer(player: player)
-                        .overlay { if playbackError { Text("Unable to play this original. Check FileBeans access and device format support.").padding().background(.regularMaterial) } }
+                        .overlay { if let playbackError { Text(playbackError).padding().background(.regularMaterial) } }
                 }
                 else if let url = source.originalURL {
                     AsyncImage(url: url) { phase in
@@ -425,9 +425,14 @@ private struct DatasetSourceViewer: View {
             .task { if video, let url = source.originalURL { player = AVPlayer(url: url) } }
             .task {
                 while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
                     if phase == .active, player?.timeControlStatus == .playing { store.noteActivity() }
-                    if player?.currentItem?.status == .failed { playbackError = true }
+                    if player?.currentItem?.status == .failed {
+                        playbackError = "Unable to play this original on this device."
+                        do { _ = try await store.source(source.id) }
+                        catch { playbackError = error.localizedDescription }
+                        return
+                    }
                 }
             }
             .onDisappear { player?.pause() }

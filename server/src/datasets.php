@@ -105,7 +105,7 @@ function datasetsAPI(string $action,array $device): never {
         if ($action==='dataset_connection'&&$method==='GET') {
             $management=rtrim($config['browser_base_url'] ?? $config['base_url'],'/').'/filebeans.php';
             if (!filebeansConfigured()) jsonResponse(['configured'=>false,'connected'=>false,'managementURL'=>$management]);
-            $cap=filebeansAPI('GET','capabilities');$ready=in_array('datasetMediaV1',$cap['features'] ?? [],true);
+            $cap=filebeansAPI('GET','capabilities');$ready=in_array('datasetOriginalsV1',$cap['features'] ?? [],true);
             jsonResponse(['configured'=>true,'connected'=>$ready,'workerReady'=>$ready,'managementURL'=>$management]);
         }
         if ($action==='dataset_sources'&&$method==='GET') {

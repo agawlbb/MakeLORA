@@ -70,7 +70,7 @@ class DatasetTests(unittest.TestCase):
                     return self.respond(202, job)
                 if route.path.startswith('/v1/datasets/jobs/'):
                     key = route.path.split('/')[4]; return self.respond(200, state['jobs'][key])
-                if route.path == '/v1/capabilities': return self.respond(200, {'features': ['datasetMediaV1']})
+                if route.path == '/v1/capabilities': return self.respond(200, {'features': ['datasetMediaV1', 'datasetOriginalsV1']})
                 if route.path == '/v1/fs/sources': return self.respond(200, {'scopes': [{'name': 'fixture'}, {'name': 'excluded'}]})
                 return self.respond(404, {})
         cert = cls.root / 'cert.pem'; key = cls.root / 'key.pem'

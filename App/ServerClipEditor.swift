@@ -14,6 +14,7 @@ struct ServerClipEditor: View {
                 media: VideoEditorMedia(url: url, thumbnails: video.thumbnails),
                 clips: project.clips.filter { $0.videoID == video.id }.map(\.editorClip), selectedID: initial.id,
                 newClipAt: project.clips.contains(where: { $0.id == initial.id }) ? nil : initial.start,
+                newClipCaption: initial.caption,
                 refresh: {
                     let fresh = try await store.source(video.id, inspect: true)
                     guard let url = fresh.originalURL else { throw URLError(.resourceUnavailable) }

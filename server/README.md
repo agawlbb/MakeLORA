@@ -406,7 +406,7 @@ render scratch exists only during explicit export. Source registration and editi
 create no media derivatives. AI generation storage is unchanged.
 
 Deploy the matching FileBeans feature first. Its capabilities must include
-`datasetMediaV1`; its API service runs one independent durable dataset worker.
+`datasetOriginalsV1`; its API service runs an export-only durable dataset worker.
 The existing operation table and protected-record encryption are reused; no SQL
 migration is needed. Deploy the matching broker for authenticated activity updates.
 The matching normalizer excludes completed `MakeLORA-<32 hex ID>` dataset folders.
