@@ -73,6 +73,7 @@ private struct ServerDatasetWorkspace: View {
     @Environment(\.scenePhase) private var phase
     @State private var browser: DatasetImportRoute?
     @State private var importRoute: DatasetImportRoute?
+    @State private var renderAfterSelection = false
     @State private var destination: FileBeansLocation?
     @State private var lastDestination: FileBeansLocation?
     @State private var files = false
@@ -140,9 +141,9 @@ private struct ServerDatasetWorkspace: View {
             }
             Section("Output") {
                 Button("Render to FileBeans", systemImage: "folder.badge.plus") {
-                    if let location = project.destination { Task { await store.perform { try await store.export(to: location) } } } else { browser = .output }
+                    if let location = project.destination { Task { await store.perform { try await store.export(to: location) } } } else { renderAfterSelection = true; browser = .output }
                 }.disabled(project.clips.isEmpty || ["queued", "processing"].contains(project.exportStatus))
-                Button("Choose output folder") { browser = .output }
+                Button("Choose output folder") { renderAfterSelection = false; browser = .output }
                 if ["queued", "processing"].contains(project.exportStatus) {
                     Label(project.exportStatus.capitalized, systemImage: "clock")
                     Button("Cancel render", role: .destructive) { Task { await store.perform { try await store.cancelExport() } } }
@@ -166,7 +167,7 @@ private struct ServerDatasetWorkspace: View {
                 switch route {
                 case .filebeans: Task { await store.perform { try await store.importSources(locations) } }
                 case .relink: if let relinking { Task { await store.perform { try await store.relink(relinking.id, to: location) } } }
-                case .output: Task { await store.perform { try await store.export(to: location) } }
+                case .output: Task { await store.perform { try await store.setDestination(location); if renderAfterSelection { try await store.export(to: location) } } }
                 default:
                     destination = location; lastDestination = location
                     // Let the destination sheet finish dismissing before presenting a picker.

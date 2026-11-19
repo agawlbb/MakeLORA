@@ -249,6 +249,10 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         project = saved
         return VideoEditSaveResult(clips: saved.clips.filter { $0.videoID == videoID }.map(\.editorClip))
     }
+    func setDestination(_ location: FileBeansLocation) async throws {
+        guard let project else { return }
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_destination", id: project.id, body: ["destination": ["source": location.source, "path": location.path]]))
+    }
     func export(to location: FileBeansLocation) async throws {
         guard let project else { return }
         self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: ["destination": ["source": location.source, "path": location.path]]))

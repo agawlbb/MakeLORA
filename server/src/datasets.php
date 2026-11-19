@@ -162,6 +162,11 @@ function datasetsAPI(string $action,array $device): never {
                 filebeansActivity($p);unset($p['videos'][$vid]);$p['clips']=array_filter($p['clips'],static fn($c)=>!in_array($vid,[$c['videoID'] ?? '',$c['control'] ?? '',$c['target'] ?? ''],true));$p['revision']++;$p['exportStatus']='none';
             });jsonResponse(datasetPublic($p,$device['id']));
         }
+        if ($action==='dataset_destination'&&$method==='POST') {
+            $body=datasetBody();$dest=filebeansLocation($body['destination'] ?? null);
+            $meta=filebeansAPI('GET','fs/resources',$dest);if ($meta['type']!=='directory') throw new InvalidArgumentException('Choose an output folder.');
+            $p=datasetUpdate($id,static function(&$p) use ($dest){filebeansActivity($p);$p['destination']=$dest;});jsonResponse(datasetPublic($p,$device['id']));
+        }
         if ($action==='dataset_export'&&$method==='POST') {
             $body=datasetBody();$p=datasetUpdate($id,static function(&$p) use ($body) {
                 if (!$p['clips']) throw new InvalidArgumentException('Add clips or pairs first.');
