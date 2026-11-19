@@ -26,7 +26,7 @@ The API key needs access to the new app, upload/TestFlight permissions, and the 
 
 ## Validation
 
-`Validate iPad app` runs on pushes to main and feature/fix branches, pull requests, or manual dispatch. It uses a GitHub macOS 26 runner, runs `swift test`, generates the Xcode project, and runs application tests on an available iPad simulator. Validation has no Apple credentials and performs no upload.
+`Validate iPad app` runs on pushes to main and feature/fix branches, pull requests, or manual dispatch. It uses the GitHub `xcode-27` runner with Xcode 27.2 explicitly selected and both iPhoneOS and iPhoneSimulator SDKs verified as 27.2, runs `swift test`, generates the Xcode project, and runs application tests on an available iPad simulator. Validation has no Apple credentials and performs no upload.
 
 ## Signed build and upload
 

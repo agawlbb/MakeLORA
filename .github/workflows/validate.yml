@@ -17,10 +17,19 @@ concurrency:
 jobs:
   test:
     if: github.event_name != 'workflow_dispatch' || inputs.build_app == true
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Select and verify Xcode 27.2 SDKs
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version
+          for platform in iphoneos iphonesimulator; do
+            version=$(xcrun --sdk "$platform" --show-sdk-version)
+            test "$version" = "27.2" || { echo "::error::$platform SDK 27.2 required; found $version"; exit 1; }
+            echo "Verified $platform SDK $version"
+          done
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: swift test
       - run: brew install xcodegen
@@ -59,9 +68,18 @@ jobs:
       - run: find server/src server/public server/bin -name '*.php' -exec php -l {} \;
   swift-types:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
+      - name: Select and verify Xcode 27.2 SDKs
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version
+          for platform in iphoneos iphonesimulator; do
+            version=$(xcrun --sdk "$platform" --show-sdk-version)
+            test "$version" = "27.2" || { echo "::error::$platform SDK 27.2 required; found $version"; exit 1; }
+            echo "Verified $platform SDK $version"
+          done
       - name: Test video editing rules and core project behavior
         run: swift test
       - name: Check iOS source types without producing an app build
