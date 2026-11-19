@@ -39,7 +39,7 @@ class DatasetTests(unittest.TestCase):
                 if route.path == '/v1/fs/resources':
                     if path == '/': return self.respond(200, {'type': 'directory', 'children': []})
                     return self.respond(200, {'name': path.rsplit('/', 1)[-1], 'path': path, 'revision': state['revision'], 'type': 'video/mp4', 'size': 123})
-                if route.path == '/v1/fs/content':
+                if route.path == '/v1/datasets/uploads':
                     state['uploads'][path] = self.rfile.read(int(self.headers['Content-Length'])); return self.respond(201, {'path': path})
                 if route.path == '/v1/datasets/activity':
                     state['activity'] += 1; return self.respond(200, {'active': True})
@@ -118,6 +118,6 @@ class DatasetTests(unittest.TestCase):
     def test_streamed_upload(self):
         raw = b'synthetic upload' * 1024
         url = self.base + '/?' + urllib.parse.urlencode({'action': 'dataset_upload', 'source': 'fixture', 'path': '/upload.mp4'})
-        req = urllib.request.Request(url, data=raw, headers={'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/octet-stream'})
+        req = urllib.request.Request(url, data=raw, headers={'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/octet-stream', 'Idempotency-Key': 'a' * 64, 'X-Content-SHA256': 'b' * 64})
         with urllib.request.urlopen(req) as r: self.assertEqual(r.status, 201)
         self.assertEqual(self.state['uploads']['/upload.mp4'], raw)

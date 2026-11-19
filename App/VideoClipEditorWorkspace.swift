@@ -10,6 +10,7 @@ struct VideoClipEditorWorkspace: View {
     let sourceWidth: Int
     let sourceHeight: Int
     var activity: (() -> Void)? = nil
+    var forceSave = false
     let refresh: (() async throws -> VideoEditorMedia)?
     let saveEdits: ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult
     @Environment(\.dismiss) private var dismiss
@@ -27,8 +28,8 @@ struct VideoClipEditorWorkspace: View {
     @State private var playbackError: String?
     @State private var confirmLeave = false
     @State private var confirmDelete = false
-    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() -> Void)? = nil, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
-        self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
+    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
+        self.forceSave = forceSave; self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
         var initial = VideoEditingSession(duration: duration, clips: clips, selectedID: selectedID)
         if let time = newClipAt { initial.add(at: time) }
         else if initial.clips.isEmpty { initial.add(at: 0) }
@@ -59,7 +60,7 @@ struct VideoClipEditorWorkspace: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { leave() }.disabled(saving) }
-                ToolbarItem(placement: .confirmationAction) { Button(saving ? "Saving…" : "Save all") { save() }.disabled(saving || !session.hasChanges) }
+                ToolbarItem(placement: .confirmationAction) { Button(saving ? "Saving…" : "Save all") { save() }.disabled(saving || (!session.hasChanges && !forceSave)) }
                 ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Hide keyboard") { hideKeyboard() } }
             }
             .disabled(saving)

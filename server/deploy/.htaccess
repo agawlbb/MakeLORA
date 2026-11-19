@@ -1,5 +1,5 @@
 <IfModule php_module>
-    php_value post_max_size 20M
+    php_value post_max_size 2100M
 </IfModule>
 DirectorySlash Off
 RewriteEngine On

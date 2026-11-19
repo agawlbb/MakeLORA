@@ -106,7 +106,7 @@ function datasetsAPI(string $action,array $device): never {
             $reply['scopes']=array_values(array_filter($reply['scopes'],static fn($s)=>in_array($s['name'],$allowed,true)));jsonResponse($reply);
         }
         if ($action==='dataset_files'&&$method==='GET') jsonResponse(filebeansAPI('GET','fs/resources',filebeansLocation($_GET)));
-        if ($action==='dataset_upload'&&$method==='POST') filebeansProxy('POST','fs/content',filebeansLocation($_GET),true);
+        if ($action==='dataset_upload'&&$method==='POST') filebeansProxy('POST','datasets/uploads',filebeansLocation($_GET),true);
         if ($action==='datasets'&&$method==='GET') {
             $items=[];foreach (glob(datasetRoot().'/*/project.json') ?: [] as $path) { $p=json_decode(file_get_contents($path),true,32,JSON_THROW_ON_ERROR);if (!($p['deleted'] ?? false)) $items[]=['id'=>$p['id'],'name'=>$p['name'],'model'=>$p['model'] ?? 'wan','count'=>count($p['clips'])]; }
             usort($items,static fn($a,$b)=>strcmp($a['name'],$b['name']));jsonResponse(['projects'=>$items]);
@@ -153,13 +153,13 @@ function datasetsAPI(string $action,array $device): never {
                 $clips=$body['clips'] ?? null;if (!is_array($clips)||count($clips)>500) throw new InvalidArgumentException('A dataset supports up to 500 clips or pairs.');
                 $validated=[];foreach ($clips as $clip) { $c=datasetClip($clip,$p);if (isset($validated[$c['id']])) throw new InvalidArgumentException('Duplicate item.');$validated[$c['id']]=$c; }
                 filebeansActivity($p);$p['clips']=$validated;$p['name']=datasetName($body['name'] ?? null);$p['revision']++;
-                foreach ($p['videos'] as &$v) { if (array_filter($validated,static fn($c)=>in_array($v['id'],[$c['videoID'] ?? '',$c['control'] ?? '',$c['target'] ?? ''],true))) unset($v['reviewRequired']); }unset($v);
+                foreach (($body['reviewedSources'] ?? []) as $vid) { datasetID($vid);if (isset($p['videos'][$vid])) unset($p['videos'][$vid]['reviewRequired']); }
                 if ($p['exportStatus']==='ready') $p['exportStatus']='none';
             });jsonResponse(datasetPublic($p,$device['id']));
         }
         if ($action==='dataset_remove_video'&&$method==='POST') {
             $vid=datasetID($_GET['video'] ?? null);$p=datasetUpdate($id,static function(&$p) use ($vid) {
-                unset($p['videos'][$vid]);$p['clips']=array_filter($p['clips'],static fn($c)=>!in_array($vid,[$c['videoID'] ?? '',$c['control'] ?? '',$c['target'] ?? ''],true));$p['revision']++;$p['exportStatus']='none';
+                filebeansActivity($p);unset($p['videos'][$vid]);$p['clips']=array_filter($p['clips'],static fn($c)=>!in_array($vid,[$c['videoID'] ?? '',$c['control'] ?? '',$c['target'] ?? ''],true));$p['revision']++;$p['exportStatus']='none';
             });jsonResponse(datasetPublic($p,$device['id']));
         }
         if ($action==='dataset_export'&&$method==='POST') {

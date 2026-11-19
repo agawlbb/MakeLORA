@@ -20,6 +20,7 @@ struct ServerClipEditor: View {
                     return VideoEditorMedia(url: url, thumbnails: fresh.thumbnails)
                 },
                 activity: { store.noteActivity() },
+                forceSave: video.reviewRequired == true,
                 save: { baseline, edited in try await store.saveSourceClips(projectID: project.id, videoID: video.id, baseline: baseline, edited: edited) }
             )
         } else {

@@ -59,6 +59,11 @@ function filebeansActivity(array $p): void {
 // Proxy authenticated bytes without buffering an original, upload, or preview.
 function filebeansProxy(string $method,string $route,array $query=[],bool $upload=false): never {
     $headers=[];
+    if ($upload) {
+        $key=$_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''; $hash=$_SERVER['HTTP_X_CONTENT_SHA256'] ?? '';
+        if (!preg_match('/^[a-f0-9]{64}$/D',$key)||!preg_match('/^[a-f0-9]{64}$/D',$hash)) throw new InvalidArgumentException('Upload verification is required.');
+        $headers[]='Idempotency-Key: '.$key;$headers[]='X-Content-SHA256: '.$hash;
+    }
     if (!$upload && isset($_SERVER['HTTP_RANGE'])) $headers[]='Range: '.$_SERVER['HTTP_RANGE'];
     $curl=filebeansCurl($method,$route,$query,$headers);$status=0;$sent=false;$error='';
     curl_setopt_array($curl,[CURLOPT_TIMEOUT=>0,CURLOPT_LOW_SPEED_LIMIT=>1,CURLOPT_LOW_SPEED_TIME=>120,CURLOPT_RETURNTRANSFER=>false,

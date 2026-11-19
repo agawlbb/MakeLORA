@@ -66,24 +66,27 @@ playback, sharing, removal, saved settings and **Run again**. Playback and shari
 use protected temporary files that are removed afterward; gallery images remain
 in memory. See the server README for the required migration and `ffprobe` setup.
 
-## Server video datasets from Google Drive
+## FileBeans datasets (feature trial)
 
-Open **Datasets → Server datasets · Google Drive** to create a Wan server dataset.
-Connect Google Drive through the server's authenticated website, then browse and
-select videos in the app. Originals download directly from Drive to the server;
-this avoids importing through the iOS Files provider. Matching same-name UTF-8
-TXT files in the same folder supply captions automatically.
+All new image and video datasets use FileBeans storage. Browse existing sources,
+including unlocked protected folders, or import from Photos, Files, and camera.
+Choose a FileBeans storage folder before each upload batch. Originals stay there;
+MakeLORA retains source references, captions, crop rectangles, clip times and order.
+AI generation is unchanged.
 
-Once the preview is ready, stream it to trim, crop and caption clips. Multiple
-clips can reuse one server original. **Export to FileBrowser Quantum** creates a folder of matching numbered MP4/TXT
-files at 480p, directly in the server’s configured FileBrowser storage. The app
-shows the destination when copying finishes; no device download or ZIP is needed. Source
-videos, editable settings and rendered datasets remain on the server. This
-workflow needs a network connection and remains separate from offline projects.
+Qwen image pairs and Wan video clips render on FileBeans. Choose an output folder
+for the first render; later renders reuse that destination or let you change it.
+Each render publishes a new folder containing the existing numbered training layout.
+No dataset media is retained on the MakeLORA server. Device transfer files are temporary.
 
-The server needs its own dedicated Google OAuth client and a background dataset
-worker. All approved devices share the connected Drive account and datasets.
-See [server setup and limits](server/README.md#google-drive-and-server-video-datasets).
+Unlock protected content through a FileBeans mobile app, then retry in MakeLORA.
+Dataset editing, playback, uploads, and active rendering reset the existing
+one-hour protection inactivity interval. Passive polling and an idle editor do not.
+Changed or renamed source files require explicit relinking and review of their edits.
+
+The shared FileBeans URL, token, and allowed sources are configured on the
+protected server management page. See [server setup](server/README.md#filebeans-dataset-storage).
+This trial replaces offline dataset creation; generation remains available as before.
 
 ## Video clip editor
 

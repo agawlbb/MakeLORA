@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Combine
 import MakeLORACore
 
@@ -193,6 +194,15 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         var req = URLRequest(url: parts.url!); req.httpMethod = "POST"; req.timeoutInterval = 3600
         req.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let digest = try await Task.detached(priority: .userInitiated) {
+            let input = try FileHandle(forReadingFrom: file); defer { try? input.close() }
+            var hash = SHA256()
+            while let data = try input.read(upToCount: 1_048_576), !data.isEmpty { try Task.checkCancellation(); hash.update(data: data) }
+            return hash.finalize().map { String(format: "%02x", $0) }.joined()
+        }.value
+        let identity = credential.deviceID + location.source + location.path + digest
+        let key = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        req.setValue(digest, forHTTPHeaderField: "X-Content-SHA256"); req.setValue(key, forHTTPHeaderField: "Idempotency-Key")
         let (data, response) = try await session.upload(for: req, fromFile: file)
         try Task.checkCancellation()
         guard self.credential?.token == credential.token else { throw CancellationError() }
@@ -204,10 +214,10 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         guard let project else { return }
         self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_cancel_export", id: project.id, body: [:]))
     }
-    func save(_ clips: [ServerDatasetClip], name: String? = nil, revision: Int) async throws {
+    func save(_ clips: [ServerDatasetClip], name: String? = nil, revision: Int, reviewedSources: [String] = []) async throws {
         guard let project else { return }
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(clips))
-        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: project.id, body: ["clips": encoded, "name": name ?? project.name, "revision": revision]))
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: project.id, body: ["clips": encoded, "name": name ?? project.name, "revision": revision, "reviewedSources": reviewedSources]))
     }
     func saveClip(_ clip: ServerDatasetClip, original: ServerDatasetClip?, projectID: String) async throws {
         let latest = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset", id: projectID))
@@ -219,7 +229,7 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         var clips = latest.clips.filter { $0.id != clip.id }
         if let index = latest.clips.firstIndex(where: { $0.id == clip.id }) { clips.insert(clip, at: index) }
         else { clips.append(clip) }
-        try await save(clips, revision: latest.revision)
+        try await save(clips, revision: latest.revision, reviewedSources: [clip.control, clip.target].compactMap { $0 })
     }
     func saveSourceClips(projectID: String, videoID: String, baseline: [VideoEditingClip], edited: [VideoEditingClip]) async throws -> VideoEditSaveResult {
         let latest = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset", id: projectID))
@@ -234,7 +244,7 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         let previous = Set(source.map(\.id))
         clips += merged.filter { !previous.contains($0.id) }.map { ServerDatasetClip(editor: $0, videoID: videoID) }
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(clips))
-        let saved = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: projectID, body: ["name": latest.name, "revision": latest.revision, "clips": encoded]))
+        let saved = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: projectID, body: ["name": latest.name, "revision": latest.revision, "clips": encoded, "reviewedSources": [videoID]]))
         guard project?.id == projectID else { throw CancellationError() }
         project = saved
         return VideoEditSaveResult(clips: saved.clips.filter { $0.videoID == videoID }.map(\.editorClip))

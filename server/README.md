@@ -396,215 +396,61 @@ video references/trims and flat filenames; iOS tests cover conversion, source
 orientation, variable timestamps, cancellation and generation requests. Run iOS
 tests on macOS with the existing validation workflow; Linux has no Apple SDK.
 
-## Google Drive and server video datasets
+## FileBeans dataset storage
 
-The app's **Datasets → Server datasets · Google Drive** keeps this workflow
-separate from existing offline projects. Active paired devices share the server
-library. Videos travel **Drive → server**, while the device streams only a 360p
-preview and eight timeline thumbnails. Trims, normalized crops and UTF-8 captions
-are metadata until an explicit **Render dataset on server** operation. Multiple
-clips reuse one retained original. ZIPs contain numbered `1.mp4`/`1.txt` pairs at
-the root, with the cropped shorter side resized to 480 even pixels, no audio and
-no separate control image. Numbers reflect the current clip order on each export.
-Server datasets are editable manifests, independent from local project formats.
+The feature trial uses FileBeans filesystem sources for all dataset media. The
+MakeLORA server stores only project JSON, source revisions, edit instructions,
+captions, signing material, and job/output references under its existing private
+directory. FileBeans stores originals, encrypted previews when protected, render
+scratch files, and completed training outputs. AI generation storage is unchanged.
 
-### Setup and deployment
+Deploy the matching FileBeans feature first. Its capabilities must include
+`datasetMediaV1`; its API service runs one independent durable dataset worker.
+The existing operation table and protected-record encryption are reused; no SQL
+migration is needed. Deploy the matching broker for authenticated activity updates.
+The matching normalizer excludes completed `MakeLORA-<32 hex ID>` dataset folders.
 
-This feature requires server deployment and a new app release. No database
-migration is needed: atomically replaced JSON manifests live beside private
-video files under `private_session_directory/datasets`. Preserve this directory,
-`google-drive-client.json`, `google-drive.json` and `dataset-signing-key` with the existing private backup
-inventory. They are not web-accessible. Do not create another backup job.
+Open the authenticated **FileBeans connection** management page. Enter the HTTPS
+API base URL (including `/companion` where applicable), its private token, and
+comma-separated allowed filesystem source names. Credentials are stored in
+mode-0600 `filebeans.json` and never sent to devices. Existing private configuration
+may instead provide `filebeans_url`, `filebeans_token`, and `filebeans_sources`.
+Preserve this file under the installation's existing private-data backup policy.
 
-1. Enable the Google Drive API in a dedicated Google Cloud project. Configure
-   an OAuth consent screen and a **Web application** OAuth client. Register the
-   exact redirect `https://joe.coffeybean.com/MakeLORA/drive.php` (or your configured
-   `browser_base_url` plus `/drive.php`). Download the Web client JSON and upload it through
-   **Google Drive connection → Upload client JSON** on the authenticated server
-   website. The server validates the client type/redirect, stores only client ID
-   and secret privately, and never echoes the secret. Existing private settings
-   keys `google_drive_client_id`/`google_drive_client_secret` remain a fallback
-   when there is no uploaded client file. Do not use
-   credentials belonging to another app, or put credentials in Git/the iOS app.
-2. Deploy code and the updated gateway allowlist (`drive.php`). Ensure FFmpeg,
-   ffprobe, PHP cURL/mbstring/zip and `proc_open` are available. PHP's user needs
-   the existing mode-0700 private storage directory. `ffmpeg_binary` and
-   `ffprobe_binary` default to `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`.
-3. Run `php server/bin/process-datasets.php --check` with the installation's
-   private `MAKELORA_CONFIG`. This only checks local prerequisites. Once deployment
-   is authorized, run `bash server/deploy/install-dataset-worker.sh` on the VM to
-   install/enable the dedicated systemd timer. No worker is activated by tests,
-   deployment packaging, or a device request. The existing generation retry
-   worker is unchanged. Disable the dataset timer to pause queued work.
-4. Open **Google Drive connection** on the authenticated server management page
-   (also linked from the app), sign in to Google and grant read-only offline
-   access. The OAuth state is single-use, browser-session-bound and expires in
-   ten minutes; code exchange uses PKCE. Tokens stay in mode-0600 private files.
-   The server refreshes access tokens without an open app. Disconnect removes
-   this installation's tokens; optionally revoke the grant in Google Account
-   settings too. Existing imported originals remain until their dataset is deleted.
+The device API authenticates approved paired devices and proxies FileBeans requests.
+Media URLs remain short-lived signed URLs checked against current device access.
+All media responses are private/no-store; sources and protection state are checked
+on each request, including cached previews. API tokens are never placed in URLs.
+FileBeans uploads include a SHA-256 checksum and idempotency key; interrupted
+uploads are unpublished, and a lost successful response can be retried safely.
+The upload limit remains 2 GiB per source. Reverse proxies must allow that body
+size and long-running streaming requests without spooling onto MakeLORA storage.
 
-The account grants `drive.readonly` because an in-app folder browser must list
-existing videos throughout the account. The management page discloses this
-account-wide read access before consent. This is **not** a folder-scoped grant;
-use a dedicated Google account containing only intended training data if that
-boundary is required. All approved paired devices can browse this connected
-account and share imported datasets. This is the existing single-owner server
-permission model, not a multi-user service. Google may require OAuth verification
-for broader distribution; an external consent app in Testing can have expiring
-refresh tokens. Configure the consent audience/publishing status appropriately.
-See Google's [web-server OAuth documentation](https://developers.google.com/identity/protocols/oauth2/web-server)
-and [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+Imports from Photos, Files, and camera choose a destination folder first. Matching
+UTF-8 TXT captions upload before media preparation. Browsed sources retain their
+path and revision; external changes require explicit relinking. Relinked source
+edits must be reviewed and saved before rendering. Saves use project revisions to
+prevent overwriting edits from another device.
 
-### Operation and limits
+Protected content returns a distinct locked status and directs the user to unlock
+in a FileBeans mobile app. MakeLORA cannot unlock or retain protection keys. Active
+dataset gestures/playback send activity at most once per 30 seconds. FileBeans
+processing uses broker leases and refreshes activity while working. Polling,
+queued work, and idle editors do not refresh the one-hour global idle timer.
 
-Browse **My Drive** or **Shared with me**, open folders, select up to 100 videos
-across folders and import. Listings are paginated. The server downloads only
-selected videos and an optional identical-stem `.txt` sibling; duplicate matching
-captions or non-UTF-8 text fail clearly. Missing captions start blank. Drive
-shortcuts and Shared Drives without a browsable shared folder are not listed as
-special root entries; this first version does not offer a separate Shared Drives
-root chooser. Private files do not need public sharing links. Downloads use the
-[authorized Drive media API](https://developers.google.com/workspace/drive/api/guides/manage-downloads),
-not Google web-preview pages. Deleted or non-downloadable sources fail the queued
-import. A successful server copy remains usable if its Drive source later changes
-or disappears; it does not automatically sync subsequent Drive edits.
+Outputs preserve the Qwen control/target JPEG/TXT and Wan numbered 480p MP4/TXT
+layouts. Publication is staged and no-overwrite. Each job captures fixed edits;
+results from older project revisions are identified as stale. Cancellation and
+restart recovery use the operation journal. Deleting MakeLORA metadata never
+removes FileBeans originals or published outputs.
 
-Default original limit is 2 GiB (`dataset_video_limit_bytes`), total library budget
-50 GiB (`dataset_storage_limit_bytes`), up to 500 source entries and 500 clips per
-dataset. Inputs are limited to 30 minutes, 8192 pixels per dimension, 40 megapixels,
-and a maximum 16:1 display aspect ratio. MOV/MP4, Matroska/WebM and AVI containers
-are supported when FFmpeg can decode their video. Rotation and non-square pixels
-are normalized before cropping. Extremely small crops can fail encoding; errors
-remain visible and a wider crop can be exported again. The server reserves storage
-headroom before jobs; estimates are conservative but operators must still monitor
-actual disk usage. FFmpeg is limited to two encode threads, each process has a
-30-minute timeout, and imports have a 30-minute download timeout. ZIPs use the
-server's ZipArchive/ZIP64 support rather than the local app's 4-GiB ZIP limit.
+The former Google OAuth routes, local dataset worker and mounted FileBrowser
+publication are retired. `process-datasets.php` remains a no-op for old timers;
+disable the old `makelora-datasets.timer` during deployment. Existing private
+Google tokens or retained media are not deleted by deployment. This trial assumes
+the user removed existing projects and does not migrate legacy projects.
 
-The single worker takes one queued import or export per pass. Its global file
-lock prevents duplicate work; a surviving `processing` state is restarted after a
-crash, without creating external inference jobs. Status and sanitized errors are
-stored in the manifest. Local originals are replaced when restarting an interrupted
-import; temporary render files are replaced on export retry. A failed import can
-be retried in place in the app. Swipe a source row to remove its retained files
-and dependent clips; active processing must finish first. The app warns when the worker has no recent heartbeat and
-is not currently running. Delete a dataset after its active processing finishes to
-remove originals/previews/exports; queued work is removed with it. Drive originals
-are never modified. List/GET operations do not trigger processing.
-
-Playback URLs are HMAC-signed, scoped to one media item and one active device,
-expire in one hour, support GET/HEAD and single byte ranges, and are checked
-against device revocation on every request. They contain no device bearer token
-or Google credential. Treat these URLs as temporary credentials: keep query
-strings out of HTTP access logs. Reopen an editor/dataset to refresh an expired
-URL. **Share download link** intentionally shares access to that ZIP for one hour;
-it does not download the ZIP through the device. Dataset edits invalidate stale
-export URLs. Save uses a manifest revision and rejects concurrent overwrites;
-the clip editor merges unrelated changes when its own clip is unchanged. Export
-captures a revision and rejects its result if the dataset changes while rendering.
-
-Additional APIs (all active-device bearer authentication except signed media):
-`drive_status`, `drive_files` (`folder`, `page`), `datasets`, `dataset_create` (POST
-name), `dataset` (GET id), `dataset_import` (POST id, files), `dataset_save` (POST id,
-name, revision, clips), `dataset_export` (POST id), `dataset_delete` (POST id), and
-`dataset_remove_video` (POST id, video query parameter), and
-`dataset_media` (scoped signed GET/HEAD). No API returns original server paths or
-Google credentials. The `drive.php` browser route requires normal management
-sign-in and CSRF-protected connect/disconnect; a paired device cannot replace
-server Drive credentials.
-
-Development verification (no Google/Replicate requests):
-
-```sh
-dev bash -lc 'cd /home/dev/projects/MakeLORA && python3 -m unittest server.tests.test_datasets -v'
-```
-
-Install FFmpeg inside development to run the real trim/crop/ZIP test. The HTTP
-suite checks active-device access, queue-only imports, duplicate prevention,
-invalid paths/trim/crop, revision conflicts, scoped playback, expiry/revocation,
-byte ranges/HEAD, deletion and stale export invalidation. Complete a live OAuth
-connection and one private Drive import after configuring the dedicated client;
-synthetic tests do not prove Google consent configuration or access to your files.
-
-Manual `validate.yml` dispatches default to server tests and an iOS Swift source
-type check without producing an app build. Set `build_app=true` only when an app
-build/test has been requested. Automatic push/PR app validation is unchanged.
-
-The protected Drive page accepts Google Web client JSON uploads up to 32 KiB.
-A matching server redirect URI and CSRF token are required. Replacing an existing
-client requires explicit confirmation, removes the current server Drive tokens
-and invalidates pending authorization for the old client; imported datasets remain.
-The mode-0600 `google-drive-client.json` in private storage takes precedence over
-legacy settings keys. It is read by the API and worker too; no app release or
-server restart is needed after uploading. The file is covered by the existing
-private-data backup capture. Never upload credentials through chat or commit them.
-
-
-## Direct FileBrowser Quantum dataset export
-
-Configure `dataset_export_directory` privately as
-`/var/www-data/makelora/filebrowser-datasets` and `dataset_export_label` as
-`VPS / MakeLORA datasets`. The configured directory must already exist, be writable
-by PHP, and grant no group/other write access at its root (production UID 33,
-GID 1000, mode 2750). It must be outside private session storage, application
-source and web roots. A scoped FileBrowser bind exposes only this publication
-directory at `/folder/MakeLORA datasets`; original videos, editable projects and
-credentials remain outside FileBrowser. The infrastructure repository tracks the
-Compose override and installer. No database migration is needed.
-
-With this configuration, `dataset_export` defaults to a **folder**, including when
-existing app builds send an empty request body. New clients explicitly send
-`format: folder` and show `exportFolder` when ready. The response's
-`exportDestination` is `filebrowser`; `exportURL` is null for folder exports. The
-updated app replaces the ZIP share action with **Export to FileBrowser Quantum**
-and a selectable destination path. A new app release is needed for that label and
-status display, but the existing **Render dataset on server** button also queues
-folder publication after server setup. `format: zip` remains available for legacy
-integrations, without requiring ZIP for the folder workflow.
-
-A published dataset contains only numbered `1.mp4`, `1.txt`, etc. in one directory.
-The worker reuses the current private rendered ZIP if available, copying its exact
-MP4/TXT entries without re-encoding. It validates entry names/counts/sizes and
-matching captions rather than blindly extracting an archive. Otherwise it renders
-clips and copies them directly without creating a ZIP. Originals stay untouched.
-Only metadata and previews travel to the device.
-
-Publication stages privately (mode 2700) under the scoped root and publishes the
-completed folder under the dataset name. Existing names get `-r<revision>` and,
-if necessary, a unique suffix. Existing files/folders are never replaced or
-pruned. Exported directories are mode 0770 and files 0660, inheriting group 1000
-for FileBrowser access. The managed root cannot be renamed/tampered with by the
-FileBrowser process; files inside published folders follow FileBrowser's existing
-account permissions. Old snapshots remain after edits or project deletion and
-are managed separately from the editable dataset. Stale revisions and revoked
-requesting devices prevent publication; failed/partial copies are removed, and
-a restarted job removes only its own hidden crash leftovers. Published data counts
-toward the existing dataset storage budget and is included in the existing shared
-frontend data backup capture. No new backup/cleanup schedule is installed.
-
-### Separate browser and device hostnames
-
-Use `base_url=https://coffeybean.com/MakeLORA` for new device invitations,
-downloads and callbacks. Keep `browser_base_url=https://joe.coffeybean.com/MakeLORA`
-for Drive OAuth and protected browser management. The apex exposes only the device
-API, so this deployment requires the separate browser hostname. Register the exact browser URL plus `/drive.php` with
-the existing Google Web client. Until registration is confirmed, set
-`google_drive_redirect_ready=false`; new consent is blocked with recovery steps,
-while the existing connected account and refresh tokens are preserved. Set it
-to true after registration.
-
-When deploying the hostname change, update the private production settings above
-and verify shared frontend routing/sign-in configuration in `vps_admin`. Keep
-`https://joe.coffeybean.com/MakeLORA/drive.php` authorized in the existing Google Web client. The Joe redirect is already registered;
-retiring the former VPS subdomain does not require changing Google OAuth. Preserve the existing Drive account and refresh tokens.
-The deployment script preserves private settings, so deploying source alone does
-not update these URLs.
-
-Existing paired devices retain their saved server URL. Changing `base_url` affects
-new invitations, not those saved URLs. Before retiring the former VPS subdomain,
-migrate or re-pair devices that still use it; a redirect cannot provide continuity
-once its DNS/TLS service is removed. Keep the separate legacy VM device API
-compatibility route described above. No mobile app build is required because the
-server URL comes from pairing. Existing provider jobs may also retain callback or
-download URLs on the former hostname; allow those jobs to finish before retirement.
+Validate in the development container with PHP lint and
+`python3 -m unittest discover -s server/tests -p 'test_*.py'`. The dataset suite
+uses a synthetic HTTPS FileBeans server, authenticated requests, uploads, source
+revision conflicts, and lock/unlock failures; no production media is used.
