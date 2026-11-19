@@ -184,7 +184,10 @@ function datasetsAPI(string $action,array $device): never {
             });jsonResponse(datasetPublic($p,$device['id']),202);
         }
         if ($action==='dataset_cancel_export'&&$method==='POST') { $p=datasetUpdate($id,static function(&$p){if (isset($p['exportJob'])) filebeansAPI('POST','datasets/jobs/'.$p['exportJob'].'/cancel',[],[]);$p['exportStatus']='cancelled';});jsonResponse(datasetPublic($p,$device['id'])); }
-        if ($action==='dataset_delete'&&$method==='POST') { datasetUpdate($id,static function(&$p){$p['deleted']=true;});jsonResponse(['deleted'=>true]); }
+        if ($action==='dataset_delete'&&$method==='POST') {
+            // Retain only a tombstone and the stable lock inode; remove all saved edits/references.
+            datasetUpdate($id,static function(&$p){$p=['id'=>$p['id'],'deleted'=>true];});jsonResponse(['deleted'=>true]);
+        }
         fail('Unknown dataset operation or method.',405);
     } catch (FileBeansFailure $e) { http_response_code($e->status);jsonResponse(['error'=>$e->getMessage(),'code'=>$e->reason],$e->status); }
     catch (InvalidArgumentException $e) { fail($e->getMessage()); }

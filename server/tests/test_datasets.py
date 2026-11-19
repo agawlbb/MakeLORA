@@ -133,3 +133,11 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, 'OK')
         self.assertEqual(result.stderr, '')
+    def test_delete_removes_metadata_and_keeps_filebeans(self):
+        p = self.prepared(); jobs = dict(self.state['jobs'])
+        status, reply = self.api('dataset_delete', {}, id=p['id'])
+        self.assertEqual(status, 200); self.assertTrue(reply['deleted'])
+        saved = json.loads((self.private / 'datasets' / p['id'] / 'project.json').read_text())
+        self.assertEqual(saved, {'id': p['id'], 'deleted': True})
+        self.assertEqual(self.state['jobs'], jobs)
+        status, _ = self.api('dataset', id=p['id']); self.assertEqual(status, 400)
