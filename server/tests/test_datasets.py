@@ -155,6 +155,23 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught: urllib.request.urlopen(url)
         self.assertEqual(caught.exception.code, 409)
 
+    def test_legacy_queued_source_becomes_reference_without_polling_prepare_job(self):
+        p = self.prepared()
+        manifest = self.private / 'datasets' / p['id'] / 'project.json'
+        saved = json.loads(manifest.read_text())
+        saved['videos']['a' * 32].update({'job': 'nonexistent-legacy-job', 'status': 'queued'})
+        manifest.write_text(json.dumps(saved))
+        jobs = dict(self.state['jobs']); active = self.state['activity']
+        status, fresh = self.api('dataset', id=p['id'])
+        self.assertEqual(status, 200)
+        self.assertEqual(fresh['videos'][0]['status'], 'ready')
+        self.assertNotIn('job', fresh['videos'][0])
+        self.assertEqual(self.state['jobs'], jobs)
+        self.assertEqual(self.state['activity'], active)
+        status, _ = self.api('dataset_source_access', id=p['id'], video='a' * 32)
+        self.assertEqual(status, 200)
+        self.assertGreater(self.state['activity'], active)
+
     def test_connection_uses_configured_management_origin(self):
         status, reply = self.api('dataset_connection')
         self.assertEqual(status, 200)
