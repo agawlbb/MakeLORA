@@ -44,7 +44,7 @@ jobs:
           exit "$missing"
   release:
     needs: preflight
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     env:
       TESTFLIGHT_TESTER_EMAIL: ${{ secrets.TESTFLIGHT_TESTER_EMAIL }}
@@ -56,6 +56,15 @@ jobs:
       VERIFY_EXISTING: ${{ inputs.verify_only }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select and verify Xcode 27.2 SDKs
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version
+          for platform in iphoneos iphonesimulator; do
+            version=$(xcrun --sdk "$platform" --show-sdk-version)
+            test "$version" = "27.2" || { echo "::error::$platform SDK 27.2 required; found $version"; exit 1; }
+            echo "Verified $platform SDK $version"
+          done
       - name: Prepare existing Apple signing authentication
         env:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
