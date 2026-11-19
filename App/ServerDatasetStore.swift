@@ -14,14 +14,14 @@ struct ServerDataset: Decodable, Identifiable {
     let revision: Int
     let model: String
     var destination: FileBeansLocation? = nil
-    let videos: [ServerDatasetVideo]
+    var videos: [ServerDatasetVideo]
     let clips: [ServerDatasetClip]
     let exportStatus: String
     let exportError: String?
     let exportURL: URL?
     var exportFolder: String? = nil
     var exportDestination: String? = nil
-    var processing: Bool { videos.contains { ["queued", "processing"].contains($0.status) } || ["queued", "processing"].contains(exportStatus) }
+    var processing: Bool { ["queued", "processing"].contains(exportStatus) }
 }
 struct ServerDatasetVideo: Decodable, Identifiable {
     let id: String
@@ -35,6 +35,9 @@ struct ServerDatasetVideo: Decodable, Identifiable {
     let duration: Double?
     let width: Int?
     let height: Int?
+    var sourceURL: URL? = nil
+    var caption: String? = nil
+    var originalURL: URL? { sourceURL ?? previewURL }
     let previewURL: URL?
     let thumbnails: [URL]?
 }
@@ -184,9 +187,13 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         let files = locations.map { ["id": ServerDatasetClip.identifier(), "source": $0.source, "path": $0.path] }
         self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_import", id: project.id, body: ["files": files]))
     }
-    func retrySource(_ id: String) async throws {
-        guard let project else { return }
-        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_retry_source", id: project.id, query: [URLQueryItem(name: "video", value: id)], body: [:]))
+    func source(_ id: String, inspect: Bool = false) async throws -> ServerDatasetVideo {
+        guard let project else { throw URLError(.resourceUnavailable) }
+        struct Reply: Decodable { let source: ServerDatasetVideo }
+        let result = try JSONDecoder().decode(Reply.self, from: await request(inspect ? "dataset_source_info" : "dataset_source_access", id: project.id, query: [URLQueryItem(name: "video", value: id)])).source
+        guard self.project?.id == project.id else { throw CancellationError() }
+        if let index = self.project?.videos.firstIndex(where: { $0.id == id }) { self.project?.videos[index] = result }
+        return result
     }
     func relink(_ id: String, to location: FileBeansLocation) async throws {
         guard let project else { return }

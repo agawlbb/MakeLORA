@@ -48,7 +48,7 @@ struct ServerImagePairEditor: View {
                 }
                 Section("Crop") {
                     Picker("Side", selection: $side) { Text("Control").tag(0); Text("Target").tag(1) }.pickerStyle(.segmented)
-                    if let source, let url = source.previewURL {
+                    if let source, let url = source.originalURL {
                         GeometryReader { bounds in
                             let size = VideoCropGeometry.fitted(aspect: Double(source.width ?? 1) / Double(source.height ?? 1), width: bounds.size.width, height: bounds.size.height)
                             AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
@@ -83,14 +83,14 @@ struct ServerImagePairEditor: View {
             .interactiveDismissDisabled(saving)
             .onChange(of: pair) { _, _ in noteActivity() }
             .onChange(of: side) { _, _ in noteActivity() }
-            .task { await checkAccess() }
+            .task(id: source?.id) { await checkAccess() }
         }
     }
     private func noteActivity() {
         Task { do { try await store.activity() } catch { self.error = error.localizedDescription } }
     }
     private func checkAccess() async {
-        do { try await store.open(project.id); error = nil }
+        do { if let id = source?.id { _ = try await store.source(id, inspect: true) }; error = nil }
         catch { self.error = error.localizedDescription }
     }
     private func slider(_ label: String, key: WritableKeyPath<Crop, Double>, range: ClosedRange<Double>) -> some View {

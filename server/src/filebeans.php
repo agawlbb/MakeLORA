@@ -38,7 +38,7 @@ function filebeansCurl(string $method,string $route,array $query=[],array $heade
 function filebeansError(int $status,?array $body): never {
     $reason=$body['code'] ?? '';
     if ($status===423||$reason==='locked'||str_contains(strtolower($body['error'] ?? ''),'locked')) throw new FileBeansFailure('locked','Unlock protected content in a FileBeans mobile app, then retry.',423);
-    if ($reason==='source_changed') throw new FileBeansFailure('source_changed','Source changed. Relink it and review its edits.',409);
+    if ($status===412||$reason==='source_changed') throw new FileBeansFailure('source_changed','Source changed. Relink it and review its edits.',409);
     if ($status===409) throw new FileBeansFailure('conflict','A file with that name already exists, or the operation conflicts. Choose another name or folder.',409);
     if ($status===404) throw new FileBeansFailure('missing','FileBeans content is unavailable. Unlock protected content in a FileBeans mobile app if needed, then retry or relink the source.',404);
     throw new FileBeansFailure('unavailable','FileBeans could not complete the operation. Check its connection and storage, then retry.');
@@ -53,7 +53,7 @@ function filebeansAPI(string $method,string $route,array $query=[],?array $body=
     return $reply;
 }
 function filebeansActivity(array $p): void {
-    $items=[];foreach ($p['videos'] as $source) $items[]=['source'=>$source['source'],'path'=>$source['path'],'job'=>$source['job']];
+    $items=[];foreach ($p['videos'] as $source) $items[]=['source'=>$source['source'],'path'=>$source['path'],'vault'=>$source['vault'] ?? ''];
     if (isset($p['destination'])) { $destination=$p['destination'];if (isset($p['exportJob'])) $destination['job']=$p['exportJob'];$items[]=$destination; }
     if ($items) filebeansAPI('POST','datasets/activity',[],array_values($items));
 }
@@ -66,7 +66,7 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
         $headers[]='Idempotency-Key: '.$key;$headers[]='X-Content-SHA256: '.$hash;
     }
     if (!$upload && isset($_SERVER['HTTP_RANGE'])) $headers[]='Range: '.$_SERVER['HTTP_RANGE'];
-    $curl=filebeansCurl($method,$route,$query,$headers);$status=0;$sent=false;$error='';
+    $curl=filebeansCurl($method,$route,$query,$headers);if ($method==='HEAD') curl_setopt($curl,CURLOPT_NOBODY,true);$status=0;$sent=false;$error='';
     curl_setopt_array($curl,[CURLOPT_TIMEOUT=>3600,CURLOPT_LOW_SPEED_LIMIT=>1,CURLOPT_LOW_SPEED_TIME=>120,CURLOPT_RETURNTRANSFER=>false,
         CURLOPT_HEADERFUNCTION=>static function($c,$line) use (&$status) {
             if (preg_match('/^HTTP\/\S+ (\d+)/',$line,$m)) $status=(int)$m[1];

@@ -112,8 +112,7 @@ struct VideoEditorTimeline: View {
                     Group {
                         if let urls = media.thumbnails, urls.indices.contains(i) {
                             AsyncImage(url: urls[i]) { image in image.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
-                        } else if media.url.isFileURL { VideoFrame(url: media.url, time: duration*Double(i)/8) }
-                        else { Color.gray.opacity(0.2) }
+                        } else { VideoFrame(url: media.url, time: duration*Double(i)/8) }
                     }.frame(width: proxy.size.width, height: proxy.size.height).clipped()
                 }
             }

@@ -68,25 +68,25 @@ in memory. See the server README for the required migration and `ffprobe` setup.
 
 ## FileBeans datasets (feature trial)
 
-All new image and video datasets use FileBeans storage. Browse existing sources,
-including unlocked protected folders, or import from Photos, Files, and camera.
-Choose a FileBeans storage folder before each upload batch. Originals stay there;
-MakeLORA retains source references, captions, crop rectangles, clip times and order.
-AI generation is unchanged.
+Existing FileBeans sources are registered by their original path and revision.
+Registration creates no media copies, preparation jobs, or automatic clips.
+Files, Photos, and camera imports first ask for a FileBeans storage folder, then
+upload the original there. MakeLORA retains source references and edit commands.
 
-Qwen image pairs and Wan video clips render on FileBeans. Choose an output folder
-for the first render; later renders reuse that destination or let you change it.
-Each render publishes a new folder containing the existing numbered training layout.
-No dataset media is retained on the MakeLORA server. Device transfer files are temporary.
+The dataset screen has separate Sources, Clips/Pairs, and Export areas. Sources
+adds, views, relinks, and removes original references. Clips/Pairs contains trims,
+crops, pairing, captions, and ordering. Viewing and editing stream original bytes
+from FileBeans; metadata inspection is read-only and timeline frames are decoded
+in device memory. Original formats must be supported by the device.
 
+Only Export dataset encodes, trims, or crops media. Outputs are published in a
+new folder in the selected FileBeans destination; originals stay unchanged.
 Unlock protected content through a FileBeans mobile app, then retry in MakeLORA.
-Dataset editing, playback, uploads, and active rendering reset the existing
-one-hour protection inactivity interval. Passive polling and an idle editor do not.
-Changed or renamed source files require explicit relinking and review of their edits.
+Dataset operations and active playback/rendering reset the one-hour inactivity
+timer. Passive status polling does not keep protected content unlocked.
 
-The shared FileBeans URL, token, and allowed sources are configured on the
-protected server management page. See [server setup](server/README.md#filebeans-dataset-storage).
-This trial replaces offline dataset creation; generation remains available as before.
+The shared FileBeans connection is configured through the protected server
+management page. See [server setup](server/README.md#filebeans-dataset-storage).
 
 ## Video clip editor
 

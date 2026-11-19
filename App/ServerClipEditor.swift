@@ -7,7 +7,7 @@ struct ServerClipEditor: View {
     let video: ServerDatasetVideo
     let initial: ServerDatasetClip
     var body: some View {
-        if let url = video.previewURL {
+        if let url = video.originalURL {
             VideoClipEditorWorkspace(
                 name: video.name, duration: video.duration ?? initial.end,
                 width: video.width ?? 16, height: video.height ?? 9,
@@ -15,8 +15,8 @@ struct ServerClipEditor: View {
                 clips: project.clips.filter { $0.videoID == video.id }.map(\.editorClip), selectedID: initial.id,
                 newClipAt: project.clips.contains(where: { $0.id == initial.id }) ? nil : initial.start,
                 refresh: {
-                    try await store.open(project.id)
-                    guard let fresh = store.project?.videos.first(where: { $0.id == video.id }), let url = fresh.previewURL else { throw URLError(.resourceUnavailable) }
+                    let fresh = try await store.source(video.id, inspect: true)
+                    guard let url = fresh.originalURL else { throw URLError(.resourceUnavailable) }
                     return VideoEditorMedia(url: url, thumbnails: fresh.thumbnails)
                 },
                 activity: { try await store.activity() },
@@ -24,7 +24,7 @@ struct ServerClipEditor: View {
                 save: { baseline, edited in try await store.saveSourceClips(projectID: project.id, videoID: video.id, baseline: baseline, edited: edited) }
             )
         } else {
-            ContentUnavailableView("Preview unavailable", systemImage: "video.slash", description: Text("Reopen the dataset to refresh its preview."))
+            ContentUnavailableView("Source unavailable", systemImage: "video.slash", description: Text("Reopen the source to check FileBeans access."))
         }
     }
 }

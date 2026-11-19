@@ -66,6 +66,39 @@ private final class DatasetStubProtocol: URLProtocol {
         XCTAssertNil(store.connection)
         XCTAssertEqual(store.managementURL?.host, "other.fixture.invalid")
     }
+    func testOriginalReferenceIsReadyWithoutPreparationAndInspectionIsExplicit() async throws {
+        let id = String(repeating: "a", count: 32)
+        var actions: [String] = []
+        let source: [String: Any] = ["id": id, "source": "fixture", "path": "/original.mov", "revision": String(repeating: "b", count: 64), "name": "original.mov", "status": "ready", "sourceURL": "https://api.fixture.invalid/original"]
+        DatasetStubProtocol.handler = { request in
+            let action = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "action" }!.value!
+            actions.append(action)
+            switch action {
+            case "dataset", "dataset_import":
+                return ["id": id, "name": "Fixture", "model": "wan", "revision": 1, "videos": [source], "clips": [], "exportStatus": "none"]
+            case "dataset_activity": return ["active": true]
+            case "dataset_source_access": return ["source": source]
+            case "dataset_source_info":
+                var inspected = source; inspected["width"] = 1920; inspected["height"] = 1080; inspected["duration"] = 10
+                return ["source": inspected]
+            default: throw URLError(.unsupportedURL)
+            }
+        }
+        defer { DatasetStubProtocol.handler = nil }
+        let store = makeStore()
+        try await store.open(id)
+        try await store.importSources([FileBeansLocation(source: "fixture", path: "/original.mov")])
+        XCTAssertEqual(store.project?.clips.count, 0)
+        XCTAssertEqual(store.project?.processing, false)
+        XCTAssertNil(store.project?.videos.first?.duration)
+        let original = try await store.source(id)
+        XCTAssertEqual(original.originalURL?.absoluteString, "https://api.fixture.invalid/original")
+        XCTAssertFalse(actions.contains("dataset_source_info"))
+        let inspected = try await store.source(id, inspect: true)
+        XCTAssertEqual(inspected.duration, 10)
+        XCTAssertEqual(store.project?.videos.first?.width, 1920)
+        XCTAssertEqual(store.project?.clips.count, 0)
+    }
     func testOlderServerConnectionMetadataRemainsCompatible() async throws {
         DatasetStubProtocol.handler = { request in
             let action = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!.first { $0.name == "action" }!.value!

@@ -99,6 +99,10 @@ private struct ServerDatasetWorkspace: View {
     @State private var photos = false
     @State private var camera = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var area = "Sources"
+    @State private var viewing: ServerDatasetVideo?
+    @State private var removing: ServerDatasetVideo?
+    @State private var choosingClip = false
     @State private var editing: ServerDatasetClip?
     @State private var pair: ServerDatasetClip?
     @State private var relinking: ServerDatasetVideo?
@@ -114,6 +118,12 @@ private struct ServerDatasetWorkspace: View {
     @State private var transferred: [FileBeansLocation] = []
     var body: some View {
         List {
+            Picker("Workspace", selection: $area) {
+                Text("Sources").tag("Sources")
+                Text(project.model == "wan" ? "Clips" : "Pairs").tag("Edits")
+                Text("Export").tag("Export")
+            }.pickerStyle(.segmented).listRowBackground(Color.clear)
+            if area == "Sources" {
             Section {
                 Menu {
                     Button("From FileBeans", systemImage: "externaldrive") { browser = .filebeans }
@@ -121,18 +131,35 @@ private struct ServerDatasetWorkspace: View {
                     Button("From Photos", systemImage: "photo.on.rectangle") { chooseDestination(.photos) }
                     if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("Camera", systemImage: "camera") { chooseDestination(.camera) } }
                 } label: { Label("Import sources", systemImage: "square.and.arrow.down") }
-                if project.model == "qwen" {
-                    Button("New image pair", systemImage: "plus") { pair = ServerDatasetClip(id: ServerDatasetClip.identifier()) }
-                        .disabled(project.videos.filter { $0.status == "ready" }.isEmpty)
-                }
             }
+            Section("Sources") {
+                ForEach(project.videos) { video in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button { Task { await store.perform { viewing = try await store.source(video.id) } } } label: {
+                            Label(video.name, systemImage: project.model == "wan" ? "video" : "photo")
+                        }
+                        Text(video.source + " / " + video.path).font(.caption).foregroundStyle(.secondary)
+                        Button("Relink source") { relinking = video; browser = .relink }
+                    }.swipeActions { Button("Remove source", role: .destructive) { removing = video } }
+                }
+                if project.videos.isEmpty { Text("Add sources to this dataset.").foregroundStyle(.secondary) }
+            }
+            }
+            if area == "Edits" {
+                Section {
+                    if project.model == "wan" {
+                        Button("New clip", systemImage: "plus") { choosingClip = true }.disabled(project.videos.isEmpty)
+                    } else {
+                        Button("New image pair", systemImage: "plus") { pair = ServerDatasetClip(id: ServerDatasetClip.identifier()) }.disabled(project.videos.isEmpty)
+                    }
+                }
             Section(project.model == "wan" ? "Clips" : "Image pairs") {
                 ForEach(project.clips) { clip in
-                    Button { if project.model == "wan" { editing = clip } else { pair = clip }; store.noteActivity() } label: {
+                    Button { if project.model == "wan" { openClip(clip) } else { pair = clip }; store.noteActivity() } label: {
                         HStack {
-                            if let source = project.videos.first(where: { $0.id == (clip.control ?? clip.videoID) }), let url = source.previewURL {
-                                AsyncImage(url: source.thumbnails?.first ?? url) { image in image.resizable().scaledToFit() } placeholder: { Image(systemName: "photo") }.frame(width: 70, height: 50)
-                            }
+                            if project.model == "qwen", let source = project.videos.first(where: { $0.id == clip.control }), let url = source.originalURL {
+                                AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { Image(systemName: "photo") }.frame(width: 70, height: 50)
+                            } else { Image(systemName: "video").frame(width: 70, height: 50) }
                             VStack(alignment: .leading) {
                                 if project.model == "wan" { Text(String(format: "%.2f–%.2f s", clip.start, clip.end)) } else { Text("Image pair") }
                                 Text(clip.caption.isEmpty ? "Needs caption" : clip.caption).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -144,37 +171,26 @@ private struct ServerDatasetWorkspace: View {
                     Task { await store.perform { try await store.save(clips, revision: project.revision) } }
                 }
             }
-            Section("Sources") {
-                ForEach(project.videos) { video in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack { Text(video.name); Spacer(); if ["queued", "processing"].contains(video.status) { ProgressView() }; Text(video.status.capitalized).font(.caption) }
-                        if let error = video.error { Text(error).font(.caption).foregroundStyle(.red) }
-                        if video.reviewRequired == true { Text("Review this source’s edits and save before rendering.").font(.caption) }
-                        if ["failed", "blocked", "cancelled"].contains(video.status) { Button("Retry") { Task { await store.perform { try await store.retrySource(video.id) } } } }
-                        Button("Relink source") { relinking = video; browser = .relink }
-                        if project.model == "wan", video.status == "ready", let duration = video.duration {
-                            Button("Edit source clips") { editing = project.clips.first(where: { $0.videoID == video.id }) ?? ServerDatasetClip(id: ServerDatasetClip.identifier(), videoID: video.id, start: 0, end: duration) }
-                        }
-                    }.swipeActions { Button("Remove source", role: .destructive) { Task { await store.perform { try await store.removeVideo(video.id) } } } }
-                }
             }
+            if area == "Export" {
             Section("Output") {
-                Button("Render to FileBeans", systemImage: "folder.badge.plus") {
+                Button("Export dataset", systemImage: "folder.badge.plus") {
                     if let location = project.destination { Task { await store.perform { try await store.export(to: location) } } } else { renderAfterSelection = true; browser = .output }
                 }.disabled(project.clips.isEmpty || ["queued", "processing"].contains(project.exportStatus))
                 Button("Choose output folder") { renderAfterSelection = false; browser = .output }
                 if ["queued", "processing"].contains(project.exportStatus) {
                     Label(project.exportStatus.capitalized, systemImage: "clock")
-                    Button("Cancel render", role: .destructive) { Task { await store.perform { try await store.cancelExport() } } }
+                    Button("Cancel export", role: .destructive) { Task { await store.perform { try await store.cancelExport() } } }
                 }
                 if let error = project.exportError { Text(error).foregroundStyle(.red).font(.caption) }
                 if let folder = project.exportFolder { Label(folder, systemImage: "checkmark.circle").textSelection(.enabled) }
+            }
             }
         }
         .disabled(uploading)
         .refreshable { await store.perform { try await store.open(project.id) } }
         .toolbar {
-            EditButton()
+            if area == "Edits" { EditButton() }
             Menu {
                 Button("Rename") { name = project.name; rename = true }
                 Button("Delete dataset", role: .destructive) { deleting = true }
@@ -223,6 +239,15 @@ private struct ServerDatasetWorkspace: View {
         .fullScreenCover(item: $editing) { clip in
             if let video = project.videos.first(where: { $0.id == clip.videoID }) { ServerClipEditor(store: store, project: project, video: video, initial: clip) }
         }
+        .fullScreenCover(item: $viewing) { source in DatasetSourceViewer(store: store, source: source, video: project.model == "wan") }
+        .confirmationDialog("Choose a source", isPresented: $choosingClip, titleVisibility: .visible) {
+            ForEach(project.videos) { source in
+                Button(source.name) { openClip(ServerDatasetClip(id: ServerDatasetClip.identifier(), videoID: source.id)) }
+            }
+        }
+        .confirmationDialog("Remove source and its edits?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
+            Button("Remove source", role: .destructive) { if let source = removing { Task { await store.perform { try await store.removeVideo(source.id) } } }; removing = nil }
+        }
         .sheet(item: $pair) { value in ServerImagePairEditor(store: store, project: project, initial: value) }
         .alert("Rename dataset", isPresented: $rename) {
             TextField("Name", text: $name)
@@ -248,6 +273,14 @@ private struct ServerDatasetWorkspace: View {
             }
         }
         .onDisappear { uploadTask?.cancel(); cleanupPending() }
+    }
+    private func openClip(_ clip: ServerDatasetClip) {
+        Task { await store.perform {
+            let source = try await store.source(clip.videoID, inspect: true)
+            var draft = clip
+            if draft.end <= draft.start { draft.end = source.duration ?? 0; draft.caption = source.caption ?? "" }
+            editing = draft
+        } }
     }
     private func chooseDestination(_ route: DatasetImportRoute) { importRoute = route; browser = route }
     private func presentImport() {
@@ -360,6 +393,45 @@ private struct DatasetCamera: UIViewControllerRepresentable {
                 else { throw URLError(.cannotDecodeContentData) }
                 parent.dismiss(); parent.completed(url)
             } catch { parent.dismiss(); parent.completed(nil) }
+        }
+    }
+}
+
+private struct DatasetSourceViewer: View {
+    @ObservedObject var store: ServerDatasetStore
+    let source: ServerDatasetVideo
+    let video: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var playbackError = false
+    @Environment(\.scenePhase) private var phase
+    var body: some View {
+        NavigationStack {
+            Group {
+                if video {
+                    VideoPlayer(player: player)
+                        .overlay { if playbackError { Text("Unable to play this original. Check FileBeans access and device format support.").padding().background(.regularMaterial) } }
+                }
+                else if let url = source.originalURL {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image { image.resizable().scaledToFit() }
+                        else if phase.error != nil { Text("Unable to open this original. Check FileBeans access and try again.") }
+                        else { ProgressView() }
+                    }
+                }
+            }
+            .navigationTitle(source.name)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task { if video, let url = source.originalURL { player = AVPlayer(url: url) } }
+            .task {
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    if phase == .active, player?.timeControlStatus == .playing { store.noteActivity() }
+                    if player?.currentItem?.status == .failed { playbackError = true }
+                }
+            }
+            .onDisappear { player?.pause() }
+            .simultaneousGesture(TapGesture().onEnded { store.noteActivity() })
         }
     }
 }
