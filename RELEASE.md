@@ -43,3 +43,16 @@ A correct PKCS12 password can still produce macOS's “MAC verification failed�
 ## Verify an existing upload
 
 If upload succeeds but processing or group verification fails, rerun **TestFlight** with the same build number and **Verify an existing upload without building or uploading** enabled. This skips compilation, signing, the unused-build-number check and upload, and reports internal group membership counts without publishing tester emails. A populated private internal group for the sole intended tester takes precedence over an empty default group.
+
+## FileBeans dataset trial — TestFlight 13 (November 19, 2026)
+
+Published **0.1.0 (13)** from `f62babc` on `feature/filebeans-datasets`.
+[Publication workflow](https://github.com/agawlbb/MakeLORA/actions/runs/44597039231)
+passed simulator tests, distribution signing, upload and existing internal tester
+verification. Apple build `32dff6d2-23a1-439d-bd08-1703af037feb` is **VALID /
+IN_BETA_TESTING**, with automatic internal notification enabled.
+
+The matching MakeLORA and FileBeans servers are deployed and their live
+connection/authentication checks pass. See
+[trial deployment and rollback](server/deploy/FILEBEANS-TRIAL.md).
+The feature branches remain unmerged pending the owner's decision.

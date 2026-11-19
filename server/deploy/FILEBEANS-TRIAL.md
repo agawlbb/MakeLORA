@@ -9,7 +9,7 @@ Runtime artifacts are under MakeLORA's ignored `build/` directory:
 - API: `filebeans-api:dc6ecd6-datasets`, source `dc6ecd6`.
 - Normalizer: `filebeans-normalizer:793eeb8-datasets`, source `793eeb8`.
 - Broker: `filebeans-vault-broker-793eeb8`, source `793eeb8`.
-- MakeLORA: `makelora-server.tar`; TestFlight 13 app source `ad66ac9`.
+- MakeLORA server and published TestFlight 13 source: `f62babc`.
 - Adjacent `.tar.json` files contain archive checksums and image digests.
 
 Verification passed: server tests and PHP lint; release-script tests; Apple source
@@ -19,32 +19,40 @@ expiry; full Go race tests with runtime rclone 1.76.0; vet; isolated image smoke
 checks. Set `FILEBEANS_TEST_RCLONE` to the prepared runtime's rclone for Go tests;
 the older development binary causes an existing critical-log test failure on main.
 
-## Deployment dependency
+## Completed cutover — November 19, 2026 UTC
 
-Deployments and app releases are authorized, but existing FileBeans archive-move
-maintenance must finish first. The broker was deliberately stopped at 15:38 UTC
-on November 19, 2026. Its systemd condition references
-`/opt/services/filebeans/deploy/vm-pic-archive-move/maintenance.json`.
-Do not remove that marker or override the stopped broker for this feature.
+The archive-move maintenance finished before deployment: its marker was absent
+and the broker active. The owner explicitly requested server cutover and app
+publication. Both feature branches remain unmerged.
 
-After coordination, recheck active tasks and image identities. Previously active
-images were `filebeans-api:d988424-fast-moves` and
-`filebeans-normalizer:3644c21-recovery`. Preserve Compose configuration, broker
-binary, MakeLORA code/gateway and service state as root-only rollback artifacts.
-Load verified VM-prepared images; update the broker, API and normalizer with a
-feature Compose overlay and `--no-build --no-deps --pull never`. Do not build on
-the VPS or change default branches. Preserve private settings and user data.
+Deployed the VM-prepared API, broker and normalizer using
+`/opt/services/filebeans/makelora-datasets.compose.yaml` with `--no-build
+--no-deps --pull never`. The API and normalizer are running with zero restarts.
+The prior images were `filebeans-api:d988424-fast-moves` and
+`filebeans-normalizer:3644c21-recovery`.
 
-Configure MakeLORA's mode-0600 private `filebeans.json` using the existing server
-token, `https://files.coffeybean.com/companion`, and allowed source names `VPS` and
-`Samba`. Never print credentials. Deploy the server archive and updated gateway;
-disable the retired dataset timer, preserving the generation timer. No migration
-or deletion of old credentials, originals, exports or backups is required.
+MakeLORA's application directory was exchanged atomically with the prepared
+server artifact. Its existing frontend container was preserved. The mode-0600
+private FileBeans connection uses the existing server token and `VPS`/`Samba`
+sources. The retired dataset timer is disabled; the generation timer remains
+active and generation implementation files were verified unchanged.
 
-Verify authenticated capabilities (`datasetMediaV1`), source discovery, broker
-readiness, container health, MakeLORA-to-FileBeans access, pairing enforcement and
-management sign-in. Do not create production test data. Physical-device capture,
-upload, unlock/retry, playback and render acceptance follows cutover.
+Live checks verified `datasetMediaV1`, authenticated source discovery, the
+MakeLORA-to-FileBeans connection, HTTP 401 for unauthenticated device APIs, and
+HTTP 302 to sign-in for management. Protected folders are locked after broker
+restart and can be unlocked using the FileBeans mobile app. Physical-device
+capture, upload, editing and rendering acceptance remains a user check.
+
+Rollback files, original application archive, service identities, verified input
+artifacts and the deployment report are retained root-only under
+`/opt/services/filebeans/deploy/makelora-datasets-dc6ecd6/`. Its `before.json`
+and `after.json` describe the cutover. The previous MakeLORA application also
+remains at `private/makelora/app-next-datasets-f62babc` after the directory exchange.
+
+[TestFlight publication 44597039231](https://github.com/agawlbb/MakeLORA/actions/runs/44597039231)
+passed simulator tests, signing, upload and internal audience verification.
+MakeLORA **0.1.0 (13)** is **VALID / IN_BETA_TESTING** for the existing sole
+intended internal tester. Apple build ID: `32dff6d2-23a1-439d-bd08-1703af037feb`.
 
 Rollback restores saved images, broker binary, Compose configuration and MakeLORA
 code/gateway. FileBeans originals and published outputs remain intact.
