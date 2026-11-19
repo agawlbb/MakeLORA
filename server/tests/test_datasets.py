@@ -121,3 +121,9 @@ class DatasetTests(unittest.TestCase):
         req = urllib.request.Request(url, data=raw, headers={'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/octet-stream', 'Idempotency-Key': 'a' * 64, 'X-Content-SHA256': 'b' * 64})
         with urllib.request.urlopen(req) as r: self.assertEqual(r.status, 201)
         self.assertEqual(self.state['uploads']['/upload.mp4'], raw)
+    def test_private_configuration_during_management_session(self):
+        code = '<?php $config=["private_session_directory"=>%s]; require %s; datasetPrivateRoot(); session_start(); filebeansSettings(); session_write_close(); echo "OK";' % (json.dumps(str(self.private)), json.dumps(str(ROOT / 'src/filebeans.php')))
+        result = subprocess.run(['php', '-d', 'display_errors=1'], input=code, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'OK')
+        self.assertEqual(result.stderr, '')

@@ -5,9 +5,10 @@ final class FileBeansFailure extends RuntimeException {
     public function __construct(public readonly string $reason, string $message, public readonly int $status=503) { parent::__construct($message); }
 }
 function datasetPrivateRoot(): string {
-    global $config;$root=$config['private_session_directory'] ?? '';
+    global $config;static $verified=null;$root=$config['private_session_directory'] ?? '';
+    if ($verified===$root) return $root;
     if (!configurePrivateSession($root)) throw new RuntimeException('Private server storage is not configured.');
-    return $root;
+    $verified=$root;return $root;
 }
 function privateJSON(string $path,array $value): void {
     $tmp=tempnam(dirname($path),'.pending-');if ($tmp===false) throw new RuntimeException('Private storage unavailable.');
