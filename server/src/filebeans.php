@@ -66,7 +66,7 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
     }
     if (!$upload && isset($_SERVER['HTTP_RANGE'])) $headers[]='Range: '.$_SERVER['HTTP_RANGE'];
     $curl=filebeansCurl($method,$route,$query,$headers);$status=0;$sent=false;$error='';
-    curl_setopt_array($curl,[CURLOPT_TIMEOUT=>0,CURLOPT_LOW_SPEED_LIMIT=>1,CURLOPT_LOW_SPEED_TIME=>120,CURLOPT_RETURNTRANSFER=>false,
+    curl_setopt_array($curl,[CURLOPT_TIMEOUT=>3600,CURLOPT_LOW_SPEED_LIMIT=>1,CURLOPT_LOW_SPEED_TIME=>120,CURLOPT_RETURNTRANSFER=>false,
         CURLOPT_HEADERFUNCTION=>static function($c,$line) use (&$status) {
             if (preg_match('/^HTTP\/\S+ (\d+)/',$line,$m)) $status=(int)$m[1];
             if ($status>=200&&$status<300&&preg_match('/^(Content-Type|Content-Length|Content-Range|Accept-Ranges|ETag):/i',$line)) header(trim($line));
@@ -77,8 +77,9 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
             return strlen($bytes);
         }]);
     if ($upload) {
+        set_time_limit(3600);
         $size=(int)($_SERVER['CONTENT_LENGTH'] ?? 0);
-        if ($size<1||$size>2*1024*1024*1024) throw new InvalidArgumentException('Choose a file no larger than 2 GiB.');
+        if ($size<1||$size>2147483647) throw new InvalidArgumentException('Choose a file no larger than 2 GiB.');
         $input=fopen('php://input','rb');curl_setopt_array($curl,[CURLOPT_UPLOAD=>true,CURLOPT_CUSTOMREQUEST=>'POST',CURLOPT_INFILE=>$input,CURLOPT_INFILESIZE=>$size]);
     }
     $ok=curl_exec($curl);curl_close($curl);if (isset($input)) fclose($input);

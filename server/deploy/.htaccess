@@ -1,6 +1,7 @@
 <IfModule php_module>
-    php_value post_max_size 2100M
+    php_value post_max_size 2048M
 </IfModule>
+LimitRequestBody 2147483647
 DirectorySlash Off
 RewriteEngine On
 RewriteOptions AllowNoSlash
