@@ -116,7 +116,7 @@ private struct ServerDatasetWorkspace: View {
     @State private var uploadError: String?
     @State private var retryName = ""
     @State private var transferred: [FileBeansLocation] = []
-    var body: some View {
+    private var workspaceList: some View {
         List {
             Picker("Workspace", selection: $area) {
                 Text("Sources").tag("Sources")
@@ -196,6 +196,10 @@ private struct ServerDatasetWorkspace: View {
                 Button("Delete dataset", role: .destructive) { deleting = true }
             } label: { Image(systemName: "ellipsis.circle") }
         }
+    }
+
+    private var importPresentation: some View {
+        workspaceList
         .sheet(item: $browser) { route in
             FileBeansBrowser(store: store, foldersOnly: route != .filebeans && route != .relink, single: route == .relink,
                              initial: route == .output ? project.destination : lastDestination) { locations in
@@ -235,6 +239,10 @@ private struct ServerDatasetWorkspace: View {
                 } catch { store.error = error.localizedDescription; cleanupPending(); uploading = false }
             }
         }
+    }
+
+    private var editorPresentation: some View {
+        importPresentation
         .fullScreenCover(isPresented: $camera) { DatasetCamera(video: project.model == "wan") { url in if let url { pending = [url]; startUpload() } } }
         .fullScreenCover(item: $editing) { clip in
             if let video = project.videos.first(where: { $0.id == clip.videoID }) { ServerClipEditor(store: store, project: project, video: video, initial: clip) }
@@ -249,6 +257,10 @@ private struct ServerDatasetWorkspace: View {
             Button("Remove source", role: .destructive) { if let source = removing { Task { await store.perform { try await store.removeVideo(source.id) } } }; removing = nil }
         }
         .sheet(item: $pair) { value in ServerImagePairEditor(store: store, project: project, initial: value) }
+    }
+
+    private var dialogPresentation: some View {
+        editorPresentation
         .alert("Rename dataset", isPresented: $rename) {
             TextField("Name", text: $name)
             Button("Save") { Task { await store.perform { try await store.save(project.clips, name: name, revision: project.revision) } } }; Button("Cancel", role: .cancel) { }
@@ -262,6 +274,10 @@ private struct ServerDatasetWorkspace: View {
             Button("Choose folder") { uploadError = nil; importRoute = nil; browser = .files }
             Button("Cancel", role: .cancel) { uploadError = nil; cleanupPending() }
         } message: { Text(uploadError ?? "") }
+    }
+
+    var body: some View {
+        dialogPresentation
         .overlay { if uploading {
             VStack(spacing: 12) { ProgressView("Uploading to FileBeans…"); Button("Cancel") { uploadTask?.cancel() } }
                 .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
