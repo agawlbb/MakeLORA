@@ -52,8 +52,8 @@ function filebeansAPI(string $method,string $route,array $query=[],?array $body=
     return $reply;
 }
 function filebeansActivity(array $p): void {
-    $items=[];foreach ($p['videos'] as $source) $items[]=['source'=>$source['source'],'path'=>$source['path']];
-    if (isset($p['destination'])) $items[]=$p['destination'];
+    $items=[];foreach ($p['videos'] as $source) $items[]=['source'=>$source['source'],'path'=>$source['path'],'job'=>$source['job']];
+    if (isset($p['destination'])) { $destination=$p['destination'];if (isset($p['exportJob'])) $destination['job']=$p['exportJob'];$items[]=$destination; }
     if ($items) filebeansAPI('POST','datasets/activity',[],array_values($items));
 }
 // Proxy authenticated bytes without buffering an original, upload, or preview.
