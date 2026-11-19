@@ -1,352 +1,123 @@
-"""Private server datasets over HTTP and real FFmpeg rendering; no Google or paid calls."""
-import hashlib
-import hmac
-import io
+"""MakeLORA metadata/API integration against a synthetic HTTPS FileBeans service."""
+import http.server
 import json
 from pathlib import Path
-import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-TOKEN = 'b' * 64
 DEVICE = 'd' * 32
-VIDEO = 'a' * 32
-SIGNING = 'fixture-only-signing-key'
-
+TOKEN = 'b' * 64
 
 class DatasetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = tempfile.TemporaryDirectory(prefix='makelora-datasets-')
-        cls.root = Path(cls.temporary.name)
-        cls.exports_temporary = tempfile.TemporaryDirectory(prefix='makelora-published-')
-        cls.exports = Path(cls.exports_temporary.name)
-        cls.exports.chmod(0o750)
-        cls.root.chmod(0o700)
-        (cls.root / 'dataset-signing-key').write_text(SIGNING)
-        (cls.root / 'google-drive.json').write_text(json.dumps({'connection': 'fixture-connection'}))
-        with socket.socket() as sock:
-            sock.bind(('127.0.0.1', 0))
-            port = sock.getsockname()[1]
+        cls.temp = tempfile.TemporaryDirectory(prefix='makelora-filebeans-')
+        cls.root = Path(cls.temp.name)
+        cls.private = cls.root / 'private'; cls.private.mkdir(mode=0o700)
+        cls.state = {'locked': False, 'revision': 'a' * 64, 'jobs': {}, 'activity': 0, 'uploads': {}}
+        state = cls.state
+        class FileBeans(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def respond(self, status, value):
+                data = json.dumps(value).encode(); self.send_response(status); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+            def do_GET(self): self.handle_api()
+            def do_POST(self): self.handle_api()
+            def handle_api(self):
+                if self.headers.get('Authorization') != 'Bearer synthetic-filebeans-token': return self.respond(403, {})
+                route = urllib.parse.urlsplit(self.path)
+                path = urllib.parse.parse_qs(route.query).get('path', ['/'])[0]
+                if state['locked']: return self.respond(423, {'code': 'locked'})
+                if route.path == '/v1/fs/resources':
+                    if path == '/': return self.respond(200, {'type': 'directory', 'children': []})
+                    return self.respond(200, {'name': path.rsplit('/', 1)[-1], 'path': path, 'revision': state['revision'], 'type': 'video/mp4', 'size': 123})
+                if route.path == '/v1/fs/content':
+                    state['uploads'][path] = self.rfile.read(int(self.headers['Content-Length'])); return self.respond(201, {'path': path})
+                if route.path == '/v1/datasets/activity':
+                    state['activity'] += 1; return self.respond(200, {'active': True})
+                if route.path == '/v1/datasets/jobs':
+                    body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                    key = self.headers['Idempotency-Key']; job = state['jobs'].get(key)
+                    if job is None:
+                        job = {'id': key, 'state': 'ready', 'request': body, 'info': {'duration': 10, 'width': 1920, 'height': 1080, 'caption': 'Fixture'}, 'result': {'source': 'fixture', 'path': '/rendered'}}
+                        state['jobs'][key] = job
+                    return self.respond(202, job)
+                if route.path.startswith('/v1/datasets/jobs/'):
+                    key = route.path.split('/')[4]; return self.respond(200, state['jobs'][key])
+                if route.path == '/v1/capabilities': return self.respond(200, {'features': ['datasetMediaV1']})
+                if route.path == '/v1/fs/sources': return self.respond(200, {'scopes': [{'name': 'fixture'}, {'name': 'excluded'}]})
+                return self.respond(404, {})
+        cert = cls.root / 'cert.pem'; key = cls.root / 'key.pem'
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(key), '-out', str(cert), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cls.fb = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FileBeans)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(cert, key); cls.fb.socket = ctx.wrap_socket(cls.fb.socket, server_side=True)
+        cls.thread = threading.Thread(target=cls.fb.serve_forever, daemon=True); cls.thread.start()
+        (cls.private / 'filebeans.json').write_text(json.dumps({'url': f'https://localhost:{cls.fb.server_port}', 'token': 'synthetic-filebeans-token', 'sources': ['fixture']}))
+        with socket.socket() as sock: sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
         cls.base = f'http://127.0.0.1:{port}'
-        cls.router = cls.root / 'router.php'
-        # Only the database authentication boundary is faked. API, locking, files, ranges,
-        # worker claims, validation, FFmpeg and ZIP processing are the production functions.
-        cls.bootstrap = '''<?php
+        router = cls.root / 'router.php'
+        router.write_text('''<?php
         $config=['private_session_directory'=>%s,'base_url'=>%s];
-        if (is_file($config['private_session_directory'].'/folder-config')) { $config['dataset_export_directory']=trim(file_get_contents($config['private_session_directory'].'/folder-config')); $config['dataset_export_label']='VPS / MakeLORA datasets'; }
-        function fail(string $message,int $code=400): never { http_response_code($code);header('Content-Type: application/json');echo json_encode(['error'=>$message]);exit; }
-        function jsonResponse(array $data,int $code=200): never { http_response_code($code);header('Content-Type: application/json');echo json_encode($data);exit; }
-        function query(string $sql,array $params=[]): object {
-            global $config;
-            $row=false;
-            if (!is_file($config['private_session_directory'].'/revoked')) {
-                if (($params[0] ?? '')===hash('sha256',str_repeat('b',64)) || ($params[0] ?? '')===str_repeat('d',32)) $row=['id'=>str_repeat('d',32),'status'=>'active'];
-            }
-            return new class($row) { function __construct(private mixed $row) {} function fetch(): mixed { return $this->row; } };
-        }
+        function fail(string $m,int $c=400): never {jsonResponse(['error'=>$m],$c);}
+        function jsonResponse(array $v,int $c=200): never {http_response_code($c);header('Content-Type: application/json');echo json_encode($v);exit;}
+        function query(string $s,array $p=[]): object {return new class {function fetch(){return ['id'=>str_repeat('d',32),'status'=>'active'];}};}
         require %s;
-        require %s;
-        ''' % (json.dumps(str(cls.root)), json.dumps(cls.base), json.dumps(str(ROOT / 'src/dataset-worker.php')), json.dumps(str(ROOT / 'src/device-auth.php')))
-        cls.router.write_text(cls.bootstrap + '''
-        try {
-            $action=$_GET['action'] ?? '';
-            if ($action==='dataset_media') serveDatasetMedia();
-            $device=authenticatedDevice($_SERVER['HTTP_AUTHORIZATION'] ?? '');
-            datasetsAPI($action,$device);
-        } catch (Throwable $e) { fail('Fixture failed: '.$e->getMessage(),503); }
-        ''')
-        cls.process = subprocess.Popen(['php', '-S', f'127.0.0.1:{port}', str(cls.router)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if (($_SERVER['HTTP_AUTHORIZATION'] ?? '')!=='Bearer '.str_repeat('b',64)) fail('Unauthorized',401);
+        datasetsAPI($_GET['action'],['id'=>str_repeat('d',32),'status'=>'active']);
+        ''' % (json.dumps(str(cls.private)), json.dumps(cls.base), json.dumps(str(ROOT / 'src/datasets.php'))))
+        cls.php = subprocess.Popen(['php', '-d', f'curl.cainfo={cert}', '-S', f'127.0.0.1:{port}', str(router)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
-                with socket.create_connection(('127.0.0.1', port), timeout=0.1):
-                    break
-            except OSError:
-                time.sleep(0.03)
-        else:
-            raise RuntimeError('Local PHP fixture did not start')
-
+                with socket.create_connection(('127.0.0.1', port), timeout=.1): break
+            except OSError: time.sleep(.03)
     @classmethod
     def tearDownClass(cls):
-        cls.process.terminate()
-        cls.process.wait(timeout=5)
-        cls.temporary.cleanup()
-        cls.exports_temporary.cleanup()
-
-    def setUp(self):
-        (self.root / 'revoked').unlink(missing_ok=True)
-        (self.root / 'folder-config').unlink(missing_ok=True)
-        for path in self.exports.iterdir():
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-        for path in (self.root / 'datasets').glob('*'):
-            if path.is_dir():
-                shutil.rmtree(path)
-        self.project = self.api('dataset_create', body={'name': 'Drive fixture'})[1]
-        self.directory = self.root / 'datasets' / self.project['id']
-
-    def request(self, url, body=None, auth=True, headers=None, method=None):
-        hdr = {'Authorization': 'Bearer ' + TOKEN} if auth else {}
-        hdr.update(headers or {})
-        if body is not None:
-            hdr['Content-Type'] = 'application/json'
-        request = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, headers=hdr, method=method)
+        cls.php.terminate(); cls.php.wait(timeout=5); cls.fb.shutdown(); cls.fb.server_close(); cls.temp.cleanup()
+    def setUp(self): self.state['locked'] = False; self.state['revision'] = 'a' * 64
+    def api(self, action, body=None, id=None, **query):
+        if id: query['id'] = id
+        url = self.base + '/?' + urllib.parse.urlencode({'action': action, **query})
+        raw = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, data=raw, headers={'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json'})
         try:
-            return urllib.request.urlopen(request, timeout=15)
-        except urllib.error.HTTPError as error:
-            return error
-
-    def api(self, action, body=None, auth=True, **params):
-        with self.request(self.base + '/api.php?' + urllib.parse.urlencode({'action': action, **params}), body, auth) as reply:
-            return reply.status, json.load(reply)
-
-    def ready_source(self):
-        p = json.loads((self.directory / 'project.json').read_text())
-        p['videos'] = {}
-        p['videos'][VIDEO] = {'id': VIDEO, 'driveID': 'fixture-drive-id', 'name': 'original.mp4', 'status': 'ready', 'duration': 2.0, 'width': 320, 'height': 180, 'connection': 'fixture-connection', 'device': DEVICE}
-        source = self.directory / VIDEO
-        source.mkdir(exist_ok=True)
-        shutil.copyfile(ROOT / 'tests/fixtures/wan-output.mp4', source / 'preview.mp4')
-        (self.directory / 'project.json').write_text(json.dumps(p))
-        return {'id': 'c' * 32, 'videoID': VIDEO, 'start': 0.25, 'end': 1.25, 'caption': 'A blue video.\nA second line.', 'crop': None}
-
-    def test_device_gate_and_import_queue_duplicate_prevention(self):
-        status, _ = self.api('datasets', auth=False)
-        self.assertEqual(status, 401)
-        for _ in range(2):
-            status, p = self.api('dataset_import', id=self.project['id'], body={'files': ['drive_video']})
-            self.assertEqual(status, 202)
-            self.assertEqual(len(p['videos']), 1)
-            self.assertEqual(p['videos'][0]['status'], 'queued')
-            self.assertNotIn('connection', p['videos'][0])
-            self.assertNotIn('device', p['videos'][0])
-        self.assertFalse((self.directory / p['videos'][0]['id']).exists(), 'web request must only queue download')
-        self.assertEqual(self.api('dataset_import', id=self.project['id'], body={'files': ['../../escape']})[0], 400)
-
-    def test_worker_recovers_interrupted_import_and_reports_changed_drive_connection(self):
-        _, p = self.api('dataset_import', id=self.project['id'], body={'files': ['drive_video']})
-        internal = json.loads((self.directory / 'project.json').read_text())
-        video = p['videos'][0]['id']
-        internal['videos'][video]['status'] = 'processing'
-        internal['videos'][video]['connection'] = 'disconnected-account'
-        (self.directory / 'project.json').write_text(json.dumps(internal))
-        partial = self.directory / video
-        partial.mkdir()
-        (partial / 'original').write_bytes(b'interrupted download')
-        worker = self.root / 'worker.php'
-        worker.write_text(self.bootstrap + 'datasetWorker();')
-        subprocess.run(['php', str(worker)], check=True, timeout=10)
-        _, result = self.api('dataset', id=self.project['id'])
-        self.assertEqual(result['videos'][0]['status'], 'failed')
-        self.assertIn('connection changed', result['videos'][0]['error'])
-        self.assertFalse(partial.exists())
-        self.assertTrue(self.api('drive_status')[1]['workerReady'])
-        _, retried = self.api('dataset_import', id=self.project['id'], body={'files': ['drive_video']})
-        self.assertEqual(len(retried['videos']), 1)
-        self.assertEqual(retried['videos'][0]['id'], video)
-        self.assertEqual(retried['videos'][0]['status'], 'queued')
-
-    def test_remove_source_removes_dependent_clips_and_files(self):
-        clip = self.ready_source()
-        self.api('dataset_save', id=self.project['id'], body={'name': 'Fixture', 'revision': 0, 'clips': [clip]})
-        status, result = self.api('dataset_remove_video', id=self.project['id'], video=VIDEO, body={})
-        self.assertEqual(status, 200)
-        self.assertEqual(result['videos'], [])
-        self.assertEqual(result['clips'], [])
-        self.assertFalse((self.directory / VIDEO).exists())
-
-    def test_validation_and_optimistic_concurrency(self):
-        clip = self.ready_source()
-        status, p = self.api('dataset_save', id=self.project['id'], body={'name': 'Edited', 'revision': 0, 'clips': [clip]})
-        self.assertEqual(status, 200)
-        self.assertEqual(p['revision'], 1)
-        self.assertEqual(p['clips'][0]['caption'], clip['caption'])
-        self.assertEqual(self.api('dataset_save', id=p['id'], body={'name': 'Stale', 'revision': 0, 'clips': []})[0], 400)
-        invalid = [dict(clip, start=-1), dict(clip, end=2.1), dict(clip, start=1.24), dict(clip, crop={'x': .9, 'y': 0, 'width': .5, 'height': 1}), dict(clip, videoID='f' * 32)]
-        for bad in invalid:
-            with self.subTest(bad=bad):
-                self.assertEqual(self.api('dataset_save', id=p['id'], body={'name': 'Bad', 'revision': 1, 'clips': [bad]})[0], 400)
-        self.assertEqual(self.api('dataset', id=p['id'])[1]['name'], 'Edited')
-
-    def test_scoped_streaming_ranges_expiry_and_revocation(self):
-        self.ready_source()
-        _, p = self.api('dataset', id=self.project['id'])
-        url = p['videos'][0]['previewURL']
-        expected = (ROOT / 'tests/fixtures/wan-output.mp4').read_bytes()
-        with self.request(url, auth=False, headers={'Range': 'bytes=10-29'}) as reply:
-            self.assertEqual(reply.status, 206)
-            self.assertEqual(reply.headers['Accept-Ranges'], 'bytes')
-            self.assertEqual(reply.read(), expected[10:30])
-        with self.request(url, auth=False, method='HEAD') as reply:
-            self.assertEqual(int(reply.headers['Content-Length']), len(expected))
-            self.assertEqual(reply.read(), b'')
-        with self.request(url.replace('kind=preview', 'kind=export'), auth=False) as reply:
-            self.assertEqual(reply.status, 401)
-        with self.request(url, auth=False, headers={'Range': 'bytes=9999999-'}) as reply:
-            self.assertEqual(reply.status, 416)
-        params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
-        params['expires'] = str(int(time.time()) - 1)
-        params['signature'] = hmac.new(SIGNING.encode(), '|'.join(params[k] for k in ['action', 'project', 'video', 'kind', 'device', 'version', 'expires']).encode(), hashlib.sha256).hexdigest()
-        with self.request(self.base + '/?' + urllib.parse.urlencode(params), auth=False) as reply:
-            self.assertEqual(reply.status, 401)
-        (self.root / 'revoked').touch()
-        with self.request(url, auth=False) as reply:
-            self.assertEqual(reply.status, 401)
-
-    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'real FFmpeg required')
-    def test_worker_renders_trim_crop_short_side_480_and_flat_zip(self):
-        clip = self.ready_source()
-        source = self.directory / VIDEO / 'original'
-        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=red:size=320x180:rate=24:duration=0.5', '-f', 'lavfi', '-i', 'color=green:size=320x180:rate=24:duration=0.5', '-f', 'lavfi', '-i', 'color=blue:size=320x180:rate=24:duration=1', '-filter_complex', '[0:v][1:v][2:v]concat=n=3:v=1:a=0[out]', '-map', '[out]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(source) + '.mp4'], check=True)
-        clip['start'], clip['end'] = .75, 1.75
-        Path(str(source) + '.mp4').rename(source)
-        clip['crop'] = {'x': .25, 'y': 0, 'width': .5, 'height': 1}
-        _, p = self.api('dataset_save', id=self.project['id'], body={'name': 'Rendered', 'revision': 0, 'clips': [clip]})
-        self.assertEqual(self.api('dataset_export', id=p['id'], body={})[0], 202)
-        worker = self.root / 'worker.php'
-        worker.write_text(self.bootstrap + 'datasetWorker();')
-        subprocess.run(['php', str(worker)], check=True, timeout=60)
-        _, p = self.api('dataset', id=p['id'])
-        self.assertEqual(p['exportStatus'], 'ready', p.get('exportError'))
-        with self.request(p['exportURL'], auth=False) as reply:
-            zipped = zipfile.ZipFile(io.BytesIO(reply.read()))
-        self.assertEqual(zipped.namelist(), ['1.mp4', '1.txt'])
-        self.assertEqual(zipped.read('1.txt').decode(), clip['caption'])
-        output = self.root / 'export.mp4'
-        output.write_bytes(zipped.read('1.mp4'))
-        probe = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(output)]))
-        stream = probe['streams'][0]
-        self.assertEqual(min(stream['width'], stream['height']), 480)
-        self.assertAlmostEqual(stream['width'] / stream['height'], 160 / 180, delta=.01)
-        self.assertAlmostEqual(float(probe['format']['duration']), 1.0, delta=.06)
-        self.assertEqual(len(probe['streams']), 1)
-        first = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(output), '-frames:v', '1', '-vf', 'scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'])
-        self.assertGreater(first[1], first[0] + 50, 'first exported frame must start in green source segment')
-        self.assertGreater(first[1], first[2] + 50)
-        self.assertEqual(self.api('dataset_save', id=p['id'], body={'name': 'Edited again', 'revision': p['revision'], 'clips': [clip]})[0], 200)
-        with self.request(p['exportURL'], auth=False) as reply:
-            self.assertEqual(reply.status, 404, 'changed dataset must invalidate previous export URL')
-        self.api('dataset_export', id=p['id'], body={})
-        subprocess.run(['php', str(worker)], check=True, timeout=60)
-        self.assertEqual(self.api('dataset', id=p['id'])[1]['exportStatus'], 'ready')
-        with self.request(p['exportURL'], auth=False) as reply:
-            self.assertEqual(reply.status, 404, 'old export links must not gain access to a newly rendered revision')
-
-    def folder_setup(self, name='WithoutGlasses'):
-        clip = self.ready_source()
-        _, p = self.api('dataset_save', id=self.project['id'], body={'name': name, 'revision': 0, 'clips': [clip]})
-        archive = self.directory / f'dataset-{p["revision"]}.zip'
-        with zipfile.ZipFile(archive, 'w') as out:
-            out.write(ROOT / 'tests/fixtures/wan-output.mp4', '1.mp4')
-            out.writestr('1.txt', clip['caption'])
-        internal = json.loads((self.directory / 'project.json').read_text())
-        internal.update(exportStatus='ready', exportRevision=p['revision'], exportFormat='zip')
-        (self.directory / 'project.json').write_text(json.dumps(internal))
-        (self.root / 'folder-config').write_text(str(self.exports))
-        return clip, p
-
-    def run_worker(self):
-        worker = self.root / 'worker.php'
-        worker.write_text(self.bootstrap + 'datasetWorker();')
-        subprocess.run(['php', str(worker)], check=True, timeout=60)
-
-    def test_folder_export_reuses_ready_zip_and_keeps_existing_snapshots(self):
-        clip, p = self.folder_setup()
-        old_url = self.api('dataset', id=p['id'])[1]['exportURL']
-        self.assertEqual(self.api('dataset_export', id=p['id'], body={})[0], 202)
-        self.run_worker()
-        _, result = self.api('dataset', id=p['id'])
-        self.assertEqual(result['exportStatus'], 'ready', result.get('exportError'))
-        self.assertEqual(result['exportFolder'], 'VPS / MakeLORA datasets / WithoutGlasses')
-        self.assertIsNone(result['exportURL'])
-        folder = self.exports / 'WithoutGlasses'
-        self.assertEqual(sorted(x.name for x in folder.iterdir()), ['1.mp4', '1.txt'])
-        self.assertEqual((folder / '1.mp4').read_bytes(), (ROOT / 'tests/fixtures/wan-output.mp4').read_bytes())
-        self.assertEqual((folder / '1.txt').read_text(), clip['caption'])
-        self.assertEqual((folder / '1.txt').stat().st_mode & 0o777, 0o660)
-        self.assertEqual(folder.stat().st_mode & 0o7777, 0o770)
-        with self.request(old_url, auth=False) as reply:
-            self.assertEqual(reply.status, 404)
-        (folder / 'keep-my-file').write_text('User file')
-        self.api('dataset_export', id=p['id'], body={'format': 'folder'})
-        self.run_worker()
-        self.assertEqual((folder / 'keep-my-file').read_text(), 'User file')
-        self.assertTrue((self.exports / f'WithoutGlasses-r{p["revision"]}' / '1.mp4').exists())
-        self.assertFalse(any(x.name.startswith('.makelora-') for x in self.exports.iterdir()))
-
-    def test_folder_export_sanitizes_names_and_does_not_overwrite_files(self):
-        _, p = self.folder_setup('../Outside/name')
-        (self.exports / 'Outside_name').write_text('Existing file')
-        self.api('dataset_export', id=p['id'], body={'format': 'folder'})
-        self.run_worker()
-        self.assertEqual((self.exports / 'Outside_name').read_text(), 'Existing file')
-        folder = self.exports / f'Outside_name-r{p["revision"]}'
-        self.assertTrue((folder / '1.mp4').exists())
-        self.assertFalse((self.exports.parent / 'Outside').exists())
-
-    def test_folder_export_rejects_unavailable_or_private_destinations_before_queueing(self):
-        _, p = self.folder_setup()
-        for destination in [self.root, self.root / 'not-a-folder']:
-            (self.root / 'folder-config').write_text(str(destination))
-            self.assertEqual(self.api('dataset_export', id=p['id'], body={'format': 'folder'})[0], 503)
-        (self.root / 'folder-config').write_text(str(self.exports))
-        self.exports.chmod(0o770)
-        try:
-            self.assertEqual(self.api('dataset_export', id=p['id'], body={'format': 'folder'})[0], 503)
-        finally:
-            self.exports.chmod(0o750)
-
-    def test_folder_export_rejects_invalid_zip_paths_and_removes_partial_output(self):
-        _, p = self.folder_setup()
-        with zipfile.ZipFile(self.directory / f'dataset-{p["revision"]}.zip', 'w') as out:
-            out.writestr('../escaped.mp4', 'Never extracted')
-            out.writestr('1.txt', 'Wrong caption')
-        self.api('dataset_export', id=p['id'], body={'format': 'folder'})
-        self.run_worker()
-        self.assertEqual(self.api('dataset', id=p['id'])[1]['exportStatus'], 'failed')
-        self.assertEqual(list(self.exports.iterdir()), [])
-        self.assertFalse((self.exports.parent / 'escaped.mp4').exists())
-
-    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'real FFmpeg required')
-    def test_fresh_folder_export_renders_without_creating_zip(self):
-        clip = self.ready_source()
-        (self.root / 'folder-config').write_text(str(self.exports))
-        source = self.directory / VIDEO / 'original.mp4'
-        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=blue:size=320x180:rate=24:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(source)], check=True)
-        source.rename(source.with_name('original'))
-        self.api('dataset_save', id=self.project['id'], body={'name': 'Fresh folder', 'revision': 0, 'clips': [clip]})
-        self.api('dataset_export', id=self.project['id'], body={'format': 'folder'})
-        self.run_worker()
-        result = self.api('dataset', id=self.project['id'])[1]
-        self.assertEqual(result['exportStatus'], 'ready', result.get('exportError'))
-        self.assertEqual(sorted(x.name for x in (self.exports / 'Fresh folder').iterdir()), ['1.mp4', '1.txt'])
-        self.assertEqual(list(self.directory.glob('dataset-*.zip')), [])
-
-    def test_delete_invalidates_preview_and_busy_delete_is_rejected(self):
-        self.ready_source()
-        _, p = self.api('dataset', id=self.project['id'])
-        url = p['videos'][0]['previewURL']
-        internal = json.loads((self.directory / 'project.json').read_text())
-        internal['videos'][VIDEO]['status'] = 'processing'
-        (self.directory / 'project.json').write_text(json.dumps(internal))
-        self.assertEqual(self.api('dataset_delete', id=p['id'], body={})[0], 400)
-        internal['videos'][VIDEO]['status'] = 'ready'
-        (self.directory / 'project.json').write_text(json.dumps(internal))
-        self.assertEqual(self.api('dataset_delete', id=p['id'], body={})[0], 200)
-        with self.request(url, auth=False) as reply:
-            self.assertEqual(reply.status, 404)
-        self.assertFalse(self.directory.exists())
-
-
-if __name__ == '__main__':
-    unittest.main()
+            with urllib.request.urlopen(req) as r: return r.status, json.load(r)
+        except urllib.error.HTTPError as e: return e.code, json.load(e)
+    def prepared(self):
+        status, p = self.api('dataset_create', {'name': 'Fixture', 'model': 'wan'}); self.assertEqual(status, 201)
+        status, p = self.api('dataset_import', {'files': [{'id': 'a' * 32, 'source': 'fixture', 'path': '/source.mp4'}]}, id=p['id']); self.assertEqual(status, 202)
+        status, p = self.api('dataset', id=p['id']); self.assertEqual(status, 200); self.assertEqual(len(p['clips']), 1)
+        return p
+    def test_metadata_only_and_render(self):
+        p = self.prepared(); self.assertEqual(p['videos'][0]['duration'], 10)
+        status, p = self.api('dataset_export', {'destination': {'source': 'fixture', 'path': '/'}}, id=p['id']); self.assertEqual(status, 202)
+        status, p = self.api('dataset', id=p['id']); self.assertEqual(p['exportFolder'], 'fixture / /rendered')
+        files = [f.name for f in (self.private / 'datasets' / p['id']).iterdir()]
+        self.assertEqual(sorted(files), ['lock', 'project.json'])
+    def test_locked_activity_preserves_edits(self):
+        p = self.prepared(); self.state['locked'] = True
+        status, error = self.api('dataset_activity', {}, id=p['id']); self.assertEqual(status, 423); self.assertEqual(error['code'], 'locked'); self.assertIn('FileBeans mobile app', error['error'])
+        self.state['locked'] = False
+        status, fresh = self.api('dataset', id=p['id']); self.assertEqual(fresh['clips'], p['clips'])
+    def test_changed_source_requires_relink(self):
+        p = self.prepared(); self.state['revision'] = 'c' * 64
+        status, error = self.api('dataset_export', {'destination': {'source': 'fixture', 'path': '/'}}, id=p['id']); self.assertEqual(status, 409); self.assertEqual(error['code'], 'source_changed')
+    def test_conflict_and_scope_checks(self):
+        p = self.prepared()
+        status, _ = self.api('dataset_save', {'revision': -1, 'name': 'Stale', 'clips': []}, id=p['id']); self.assertEqual(status, 400)
+        status, _ = self.api('dataset_files', source='excluded', path='/'); self.assertEqual(status, 400)
+        status, _ = self.api('dataset_files', source='fixture', path='/../private'); self.assertEqual(status, 400)
+        status, reply = self.api('dataset_sources'); self.assertEqual(reply['scopes'], [{'name': 'fixture'}])
+    def test_streamed_upload(self):
+        raw = b'synthetic upload' * 1024
+        url = self.base + '/?' + urllib.parse.urlencode({'action': 'dataset_upload', 'source': 'fixture', 'path': '/upload.mp4'})
+        req = urllib.request.Request(url, data=raw, headers={'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/octet-stream'})
+        with urllib.request.urlopen(req) as r: self.assertEqual(r.status, 201)
+        self.assertEqual(self.state['uploads']['/upload.mp4'], raw)

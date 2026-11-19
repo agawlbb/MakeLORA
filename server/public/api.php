@@ -37,7 +37,7 @@ try {
     if ($action==='disconnect' && $_SERVER['REQUEST_METHOD']==='POST') {
         query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[$row['id']]); jsonResponse(['status'=>'revoked']);
     }
-    if (str_starts_with($action,'dataset') || in_array($action,['drive_status','drive_files'],true)) datasetsAPI($action,$row);
+    if (str_starts_with($action,'dataset')) datasetsAPI($action,$row);
     if (in_array($action,['models','generate','prediction','gallery','output','remove_output','dismiss_generation','cancel_retries','generation_details','generation_input'],true)) generationAPI($action,$row);
     fail('Unknown operation or method.',405);
 } catch (ProviderFailure $e) { $e->respond(); }

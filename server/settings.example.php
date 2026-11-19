@@ -6,8 +6,6 @@ return [
  'base_url'=>'https://your-test-host.example/makelora',
  // Optional browser origin, separate from the stable device/callback base_url.
  'browser_base_url'=>'https://your-test-host.example/makelora',
- // Set false while registering browser_base_url + /drive.php with Google.
- 'google_drive_redirect_ready'=>true,
  'dsn'=>'mysql:host=database;dbname=makelora_test;charset=utf8mb4',
  'user'=>'makelora_test',
  'password'=>'configure-outside-git',
@@ -15,16 +13,10 @@ return [
  // mode 0700. Sessions and the persistent provider token use mode 0600.
  // Never serve this path. Session expiry does not remove the provider token.
  // Required for Wan video validation; PHP must permit proc_open.
- // Dedicated Google OAuth web client; configure privately, never in the app.
- // Register browser_base_url (or base_url) + /drive.php as its exact authorized redirect URI.
- 'google_drive_client_id'=>'',
- 'google_drive_client_secret'=>'',
- 'ffmpeg_binary'=>'/usr/bin/ffmpeg',
- 'dataset_video_limit_bytes'=>2*1024*1024*1024,
- // Scoped publication root, mapped into FileBrowser Quantum; originals stay private.
- 'dataset_export_directory'=>'',
- 'dataset_export_label'=>'VPS / MakeLORA datasets',
- 'dataset_storage_limit_bytes'=>50*1024*1024*1024,
+ // Shared dataset storage connection. Credentials stay outside Git.
+ 'filebeans_url'=>'https://files.example/companion',
+ 'filebeans_token'=>'',
+ 'filebeans_sources'=>['VPS'],
  'ffprobe_binary'=>'/usr/bin/ffprobe',
  'private_session_directory'=>'/var/lib/makelora/private-sessions',
 ];

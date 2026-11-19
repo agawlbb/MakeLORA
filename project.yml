@@ -29,7 +29,8 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        NSCameraUsageDescription: Scan a QR invitation to pair with your server.
+        NSCameraUsageDescription: Capture dataset media and scan server pairing invitations.
+        NSMicrophoneUsageDescription: Record audio while capturing dataset videos. Dataset renders omit audio.
         CFBundleDisplayName: MakeLORA
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

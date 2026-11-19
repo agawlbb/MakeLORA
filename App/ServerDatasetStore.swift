@@ -11,6 +11,8 @@ struct ServerDataset: Decodable, Identifiable {
     let id: String
     var name: String
     let revision: Int
+    let model: String
+    var destination: FileBeansLocation? = nil
     let videos: [ServerDatasetVideo]
     let clips: [ServerDatasetClip]
     let exportStatus: String
@@ -22,7 +24,10 @@ struct ServerDataset: Decodable, Identifiable {
 }
 struct ServerDatasetVideo: Decodable, Identifiable {
     let id: String
-    let driveID: String
+    let source: String
+    let path: String
+    let revision: String
+    var reviewRequired: Bool? = nil
     let name: String
     let status: String
     let error: String?
@@ -40,25 +45,46 @@ struct ServerDatasetCrop: Codable, Equatable {
 }
 struct ServerDatasetClip: Codable, Identifiable, Equatable {
     var id: String
-    var videoID: String
+    var videoID: String = ""
     var start: Double
     var end: Double
     var caption: String
     var crop: ServerDatasetCrop?
+    var control: String? = nil
+    var target: String? = nil
+    var controlCrop: ServerDatasetCrop? = nil
+    var targetCrop: ServerDatasetCrop? = nil
+    enum CodingKeys: String, CodingKey { case id, videoID, start, end, caption, crop, control, target, controlCrop, targetCrop }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); videoID = try c.decodeIfPresent(String.self, forKey: .videoID) ?? ""
+        start = try c.decode(Double.self, forKey: .start); end = try c.decode(Double.self, forKey: .end)
+        caption = try c.decode(String.self, forKey: .caption); crop = try c.decodeIfPresent(ServerDatasetCrop.self, forKey: .crop)
+        control = try c.decodeIfPresent(String.self, forKey: .control); target = try c.decodeIfPresent(String.self, forKey: .target)
+        controlCrop = try c.decodeIfPresent(ServerDatasetCrop.self, forKey: .controlCrop); targetCrop = try c.decodeIfPresent(ServerDatasetCrop.self, forKey: .targetCrop)
+    }
+    init(id: String, videoID: String = "", start: Double = 0, end: Double = 0, caption: String = "", crop: ServerDatasetCrop? = nil, control: String? = nil, target: String? = nil, controlCrop: ServerDatasetCrop? = nil, targetCrop: ServerDatasetCrop? = nil) {
+        self.id=id; self.videoID=videoID; self.start=start; self.end=end; self.caption=caption; self.crop=crop
+        self.control=control; self.target=target; self.controlCrop=controlCrop; self.targetCrop=targetCrop
+    }
     static func identifier() -> String { UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
 }
-struct DriveFile: Decodable, Identifiable {
-    let id: String
+struct FileBeansLocation: Codable, Hashable {
+    var source: String
+    var path: String
+}
+struct FileBeansEntry: Decodable, Identifiable {
     let name: String
-    let mimeType: String
-    let size: String?
-    var isFolder: Bool { mimeType == "application/vnd.google-apps.folder" }
+    let path: String
+    let type: String
+    let revision: String
+    let size: Int64
+    var children: [FileBeansEntry]?
+    var id: String { path }
+    var isFolder: Bool { type == "directory" }
 }
-struct DriveListing: Decodable {
-    let files: [DriveFile]
-    let nextPageToken: String?
-}
-struct DriveConnection: Decodable {
+struct FileBeansScope: Decodable, Identifiable { let name: String; var id: String { name } }
+struct FileBeansConnection: Decodable {
     let configured: Bool
     let connected: Bool
     let workerReady: Bool?
@@ -71,7 +97,7 @@ private struct DatasetServiceError: Decodable, LocalizedError {
 @MainActor final class ServerDatasetStore: ObservableObject {
     @Published var projects: [ServerDatasetSummary] = []
     @Published var project: ServerDataset?
-    @Published var connection: DriveConnection?
+    @Published var connection: FileBeansConnection?
     @Published var busy = false
     @Published var error: String?
     private(set) var credential: DeviceCredential?
@@ -83,7 +109,7 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         }
         credential = value
     }
-    var managementURL: URL? { credential?.server.appendingPathComponent("drive.php") }
+    var managementURL: URL? { credential?.server.appendingPathComponent("filebeans.php") }
     private func request(_ action: String, id: String? = nil, query: [URLQueryItem] = [], body: [String: Any]? = nil) async throws -> Data {
         guard let credential else { throw URLError(.userAuthenticationRequired) }
         var parts = URLComponents(url: credential.server.appendingPathComponent("api.php"), resolvingAgainstBaseURL: false)!
@@ -114,11 +140,12 @@ private struct DatasetServiceError: Decodable, LocalizedError {
     func refresh() async throws {
         struct Reply: Decodable { let projects: [ServerDatasetSummary] }
         projects = try JSONDecoder().decode(Reply.self, from: await request("datasets")).projects
-        connection = try JSONDecoder().decode(DriveConnection.self, from: await request("drive_status"))
+        connection = try JSONDecoder().decode(FileBeansConnection.self, from: await request("dataset_connection"))
     }
     func open(_ id: String) async throws {
         let result = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset", id: id))
         project = result
+        try await activity(force: true)
     }
     func poll(_ id: String) async {
         do {
@@ -127,16 +154,55 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         } catch is CancellationError { }
         catch { self.error = error.localizedDescription }
     }
-    func create(_ name: String) async throws {
-        project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_create", body: ["name": name]))
+    func create(_ name: String, model: String) async throws {
+        project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_create", body: ["name": name, "model": model]))
         try await refresh()
     }
-    func browse(_ folder: String, page: String? = nil) async throws -> DriveListing {
-        try JSONDecoder().decode(DriveListing.self, from: await request("drive_files", query: [URLQueryItem(name: "folder", value: folder), URLQueryItem(name: "page", value: page ?? "")]))
+    private var lastActivity = Date.distantPast
+    func activity(force: Bool = false) async throws {
+        guard let project, force || Date().timeIntervalSince(lastActivity) >= 30 else { return }
+        lastActivity = Date()
+        do { _ = try await request("dataset_activity", id: project.id, body: [:]) }
+        catch { lastActivity = .distantPast; throw error }
     }
-    func importVideos(_ ids: Set<String>) async throws {
+    func noteActivity() { Task { do { try await activity() } catch { self.error = error.localizedDescription } } }
+    func scopes() async throws -> [FileBeansScope] {
+        struct Reply: Decodable { let scopes: [FileBeansScope] }
+        return try JSONDecoder().decode(Reply.self, from: await request("dataset_sources")).scopes
+    }
+    func browse(_ location: FileBeansLocation) async throws -> FileBeansEntry {
+        try JSONDecoder().decode(FileBeansEntry.self, from: await request("dataset_files", query: location.query))
+    }
+    func importSources(_ locations: [FileBeansLocation]) async throws {
         guard let project else { return }
-        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_import", id: project.id, body: ["files": Array(ids).sorted()]))
+        let files = locations.map { ["id": ServerDatasetClip.identifier(), "source": $0.source, "path": $0.path] }
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_import", id: project.id, body: ["files": files]))
+    }
+    func retrySource(_ id: String) async throws {
+        guard let project else { return }
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_retry_source", id: project.id, query: [URLQueryItem(name: "video", value: id)], body: [:]))
+    }
+    func relink(_ id: String, to location: FileBeansLocation) async throws {
+        guard let project else { return }
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_relink", id: project.id, body: ["video": id, "location": ["source": location.source, "path": location.path]]))
+    }
+    func upload(_ file: URL, to location: FileBeansLocation) async throws {
+        guard let credential else { throw URLError(.userAuthenticationRequired) }
+        var parts = URLComponents(url: credential.server.appendingPathComponent("api.php"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "action", value: "dataset_upload")] + location.query
+        var req = URLRequest(url: parts.url!); req.httpMethod = "POST"; req.timeoutInterval = 3600
+        req.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await session.upload(for: req, fromFile: file)
+        try Task.checkCancellation()
+        guard self.credential?.token == credential.token else { throw CancellationError() }
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw (try? JSONDecoder().decode(DatasetServiceError.self, from: data)) ?? DatasetServiceError(error: "Upload failed. Choose another name or folder and retry.")
+        }
+    }
+    func cancelExport() async throws {
+        guard let project else { return }
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_cancel_export", id: project.id, body: [:]))
     }
     func save(_ clips: [ServerDatasetClip], name: String? = nil, revision: Int) async throws {
         guard let project else { return }
@@ -173,9 +239,9 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         project = saved
         return VideoEditSaveResult(clips: saved.clips.filter { $0.videoID == videoID }.map(\.editorClip))
     }
-    func export() async throws {
+    func export(to location: FileBeansLocation) async throws {
         guard let project else { return }
-        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: ["format": "folder"]))
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_export", id: project.id, body: ["destination": ["source": location.source, "path": location.path]]))
     }
     func removeVideo(_ id: String) async throws {
         guard let project else { return }
@@ -195,4 +261,9 @@ extension ServerDatasetClip {
     init(editor: VideoEditingClip, videoID: String) {
         self.init(id: editor.id, videoID: videoID, start: editor.start, end: editor.end, caption: editor.caption, crop: editor.crop == .full ? nil : ServerDatasetCrop(x: editor.crop.x, y: editor.crop.y, width: editor.crop.width, height: editor.crop.height))
     }
+}
+
+extension FileBeansLocation {
+    var query: [URLQueryItem] { [URLQueryItem(name: "source", value: source), URLQueryItem(name: "path", value: path)] }
+    func appending(_ name: String) -> FileBeansLocation { FileBeansLocation(source: source, path: (path == "/" ? "" : path) + "/" + name) }
 }
