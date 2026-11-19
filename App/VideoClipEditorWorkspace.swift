@@ -9,7 +9,7 @@ struct VideoClipEditorWorkspace: View {
     let duration: Double
     let sourceWidth: Int
     let sourceHeight: Int
-    var activity: (() -> Void)? = nil
+    var activity: (() async throws -> Void)? = nil
     var forceSave = false
     let refresh: (() async throws -> VideoEditorMedia)?
     let saveEdits: ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult
@@ -28,12 +28,16 @@ struct VideoClipEditorWorkspace: View {
     @State private var playbackError: String?
     @State private var confirmLeave = false
     @State private var confirmDelete = false
-    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
+    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
         self.forceSave = forceSave; self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
         var initial = VideoEditingSession(duration: duration, clips: clips, selectedID: selectedID)
         if let time = newClipAt { initial.add(at: time) }
         else if initial.clips.isEmpty { initial.add(at: 0) }
         _session = State(initialValue: initial); _media = State(initialValue: media)
+    }
+    private func noteActivity() {
+        guard let activity else { return }
+        Task { do { try await activity() } catch { self.error = error.localizedDescription } }
     }
     private var sourceAspect: Double { Double(sourceWidth)/Double(sourceHeight) }
     private var selected: VideoEditingClip? { session.selected }
@@ -75,9 +79,9 @@ struct VideoClipEditorWorkspace: View {
             }
             .onAppear { playback.load(media.url, at: selected?.start ?? 0) }
             .onDisappear { playback.stop() }
-            .onChange(of: session.clips) { _, _ in activity?() }
-            .onChange(of: playback.position) { _, _ in activity?() }
-            .onChange(of: tab) { _, _ in activity?() }
+            .onChange(of: session.clips) { _, _ in noteActivity() }
+            .onChange(of: playback.position) { _, _ in noteActivity() }
+            .onChange(of: tab) { _, _ in noteActivity() }
             .onChange(of: scenePhase) { _, phase in if phase != .active { playback.pause() } }
             .onChange(of: tab) { _, value in if value == .crop { playback.pause() }; hideKeyboard() }
             .task(id: playback.player.map { ObjectIdentifier($0) }) { await monitorPlayback() }

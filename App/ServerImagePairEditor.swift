@@ -53,7 +53,7 @@ struct ServerImagePairEditor: View {
                             let size = VideoCropGeometry.fitted(aspect: Double(source.width ?? 1) / Double(source.height ?? 1), width: bounds.size.width, height: bounds.size.height)
                             AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
                                 .frame(width: size.width, height: size.height)
-                                .overlay { VideoEditorCropOverlay(crop: crop, normalizedAspect: nil, interacting: { store.noteActivity() }) }
+                                .overlay { VideoEditorCropOverlay(crop: crop, normalizedAspect: nil, interacting: { noteActivity() }) }
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }.frame(height: 260)
                     }
@@ -81,10 +81,13 @@ struct ServerImagePairEditor: View {
                 }
             }
             .interactiveDismissDisabled(saving)
-            .onChange(of: pair) { _, _ in store.noteActivity() }
-            .onChange(of: side) { _, _ in store.noteActivity() }
+            .onChange(of: pair) { _, _ in noteActivity() }
+            .onChange(of: side) { _, _ in noteActivity() }
             .task { await checkAccess() }
         }
+    }
+    private func noteActivity() {
+        Task { do { try await store.activity() } catch { self.error = error.localizedDescription } }
     }
     private func checkAccess() async {
         do { try await store.open(project.id); error = nil }

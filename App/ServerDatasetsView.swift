@@ -152,6 +152,7 @@ private struct ServerDatasetWorkspace: View {
                 if let folder = project.exportFolder { Label(folder, systemImage: "checkmark.circle").textSelection(.enabled) }
             }
         }
+        .disabled(uploading)
         .refreshable { await store.perform { try await store.open(project.id) } }
         .toolbar {
             EditButton()
@@ -221,7 +222,6 @@ private struct ServerDatasetWorkspace: View {
             VStack(spacing: 12) { ProgressView("Uploading to FileBeans…"); Button("Cancel") { uploadTask?.cancel() } }
                 .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         } }
-        .disabled(uploading)
         .task(id: project.id) {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }

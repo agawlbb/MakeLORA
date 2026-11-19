@@ -19,7 +19,7 @@ struct ServerClipEditor: View {
                     guard let fresh = store.project?.videos.first(where: { $0.id == video.id }), let url = fresh.previewURL else { throw URLError(.resourceUnavailable) }
                     return VideoEditorMedia(url: url, thumbnails: fresh.thumbnails)
                 },
-                activity: { store.noteActivity() },
+                activity: { try await store.activity() },
                 forceSave: video.reviewRequired == true,
                 save: { baseline, edited in try await store.saveSourceClips(projectID: project.id, videoID: video.id, baseline: baseline, edited: edited) }
             )
