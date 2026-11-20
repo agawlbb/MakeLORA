@@ -115,7 +115,7 @@ struct VideoClipEditorWorkspace: View {
                 }.accessibilityLabel(previewCrop ? "Cropped video preview" : "Source video preview")
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             playbackButtons
-            VideoEditorTimeline(media: media, duration: duration, hasSelection: selected != nil, fixedLength: session.fixedLength, start: startBinding, end: endBinding, position: positionBinding)
+            VideoEditorTimeline(media: media, duration: duration, hasSelection: selected != nil, fixedLength: session.fixedLength, start: startBinding, end: endBinding, position: positionBinding, scrubbingEnded: { playback.finishScrubbing() })
         }
     }
     private var playbackButtons: some View {
@@ -166,7 +166,7 @@ struct VideoClipEditorWorkspace: View {
             HStack { Button("−0.1 s") { endBinding.wrappedValue -= 0.1 }; Button("Set end here") { endBinding.wrappedValue = playback.position }; Button("+0.1 s") { endBinding.wrappedValue += 0.1 } }.font(.caption).buttonStyle(.bordered)
             }
             Text(String(format: "Clip length: %.3f seconds", clip.end-clip.start)).monospacedDigit()
-            Slider(value: positionBinding, in: (previewCrop ? (selected?.start ?? 0) : 0)...(previewCrop ? (selected?.end ?? duration) : duration)).accessibilityLabel("Source video playhead")
+            Slider(value: positionBinding, in: (previewCrop ? (selected?.start ?? 0) : 0)...(previewCrop ? (selected?.end ?? duration) : duration), onEditingChanged: { editing in if !editing { playback.finishScrubbing() } }).accessibilityLabel("Source video playhead")
             Button("Save and add another clip", systemImage: "plus.rectangle.on.rectangle") { save(addAnother: true) }.buttonStyle(.borderedProminent)
             Text("Saves every draft clip. The next short selection starts at this clip’s end. Overlapping clips are also allowed.").font(.caption).foregroundStyle(.secondary)
         }

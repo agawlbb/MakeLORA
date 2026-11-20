@@ -4,6 +4,38 @@ import XCTest
 final class VideoEditingTests: XCTestCase {
     private func clip(_ id: String = "first", start: Double = 10, end: Double = 20) -> VideoEditingClip { VideoEditingClip(id: id, start: start, end: end, caption: "Original caption") }
 
+    func testContinuousScrubStartsImmediatelyAndKeepsOnlyLatestWaitingFrame() {
+        var queue = VideoPreviewSeekQueue()
+        let first = VideoPreviewSeek(time: 10)
+        XCTAssertEqual(queue.submit(first), first)
+        for time in 11...100 { XCTAssertNil(queue.submit(VideoPreviewSeek(time: Double(time)))) }
+        XCTAssertEqual(queue.active, first, "Dragging must not cancel an in-flight frame read")
+        XCTAssertEqual(queue.complete(), VideoPreviewSeek(time: 100))
+        XCTAssertNil(queue.complete())
+        XCTAssertNil(queue.active)
+    }
+
+    func testScrubReleaseQueuesExactFinalFrameAndRetainsCropEnd() {
+        var queue = VideoPreviewSeekQueue()
+        _ = queue.submit(VideoPreviewSeek(time: 10, end: 15))
+        let final = VideoPreviewSeek(time: 12, end: 15, precise: true)
+        XCTAssertNil(queue.submit(final))
+        XCTAssertEqual(queue.complete(), final)
+        XCTAssertNil(queue.complete())
+        XCTAssertEqual(queue.submit(final), final)
+        queue.reset()
+        XCTAssertNil(queue.complete(), "Closing or reloading must discard pending frame reads")
+    }
+
+    func testScrubbingBackToActiveFrameDiscardsObsoleteWaitingPosition() {
+        var queue = VideoPreviewSeekQueue()
+        let first = VideoPreviewSeek(time: 10)
+        _ = queue.submit(first)
+        _ = queue.submit(VideoPreviewSeek(time: 20))
+        _ = queue.submit(first)
+        XCTAssertNil(queue.complete())
+    }
+
     func testFixedWindowKeepsLengthAtSourceEdges() {
         var session = VideoEditingSession(duration: 20, clips: [clip()], selectedID: "first", fixedLength: 5)
         XCTAssertEqual(session.selected?.end, 15)

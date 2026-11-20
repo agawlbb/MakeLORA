@@ -162,3 +162,33 @@ extension Project {
         return VideoEditSaveResult(clips: result.map(VideoEditingClip.init), idMapping: mapping)
     }
 }
+
+/// Serializes preview reads without postponing them until a drag stops.
+public struct VideoPreviewSeek: Equatable, Sendable {
+    public var time: Double
+    public var end: Double?
+    public var precise: Bool
+    public init(time: Double, end: Double? = nil, precise: Bool = false) {
+        self.time = time; self.end = end; self.precise = precise
+    }
+}
+
+public struct VideoPreviewSeekQueue: Sendable {
+    public private(set) var active: VideoPreviewSeek?
+    private var pending: VideoPreviewSeek?
+    public init() { }
+    /// Start the first read immediately; replace only the waiting request.
+    public mutating func submit(_ request: VideoPreviewSeek) -> VideoPreviewSeek? {
+        guard active == nil else {
+            pending = request == active ? nil : request
+            return nil
+        }
+        active = request
+        return request
+    }
+    public mutating func complete() -> VideoPreviewSeek? {
+        active = pending; pending = nil
+        return active
+    }
+    public mutating func reset() { active = nil; pending = nil }
+}

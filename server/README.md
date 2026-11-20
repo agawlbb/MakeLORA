@@ -460,7 +460,8 @@ revision conflicts, and lock/unlock failures; no production media is used.
 
 Remote clip timelines show time markers, or supplied thumbnail images, without
 starting frame extractors across the original video. Local files retain timeline
-frame extraction. Editor seeks are coalesced over 120 ms while dragging, preview
+frame extraction. Editor seeks start immediately and run one at a time, keeping only the latest
+waiting position while dragging and requesting an exact frame on release. Preview
 players prefer a one-second forward buffer, and closing a source viewer/editor
 releases its player item and cancels asset loading. Crop preview seeks retain the
 trim endpoint. These buffering preferences reduce read-ahead; AVFoundation still

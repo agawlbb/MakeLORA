@@ -16,7 +16,8 @@ struct VideoEditorMedia {
     private var observer: Any?
     private var seeking = false
     private var seekNumber = 0
-    private var pendingSeek: Task<Void, Never>?
+    private var seekQueue = VideoPreviewSeekQueue()
+    private var requestedSeek: VideoPreviewSeek?
     func load(_ url: URL, at time: Double, end: Double? = nil) {
         stop()
         let item = AVPlayerItem(url: url)
@@ -36,36 +37,40 @@ struct VideoEditorMedia {
     }
     func seek(_ time: Double, end: Double? = nil, coalescing: Bool = false) {
         guard time.isFinite, let player else { return }
-        pause(); position = max(0, time); seeking = true; seekNumber += 1
-        let number = seekNumber
-        pendingSeek?.cancel(); pendingSeek = nil
-        player.currentItem?.forwardPlaybackEndTime = end.map { CMTime(seconds: $0, preferredTimescale: 60000) } ?? .invalid
-        player.currentItem?.cancelPendingSeeks()
-        let target = position
-        if coalescing {
-            pendingSeek = Task { [weak self, weak player] in
-                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
-                guard let self, let player, self.seekNumber == number else { return }
-                self.pendingSeek = nil
-                self.performSeek(player, to: target, number: number)
-            }
-        } else { performSeek(player, to: target, number: number) }
+        pause(); position = max(0, time); seeking = true
+        if !coalescing {
+            seekNumber += 1; seekQueue.reset(); player.currentItem?.cancelPendingSeeks()
+        }
+        let request = VideoPreviewSeek(time: position, end: end, precise: !coalescing)
+        requestedSeek = request
+        if let next = seekQueue.submit(request) { performSeek(player, request: next, number: seekNumber) }
     }
-    private func performSeek(_ player: AVPlayer, to time: Double, number: Int) {
-        player.seek(to: CMTime(seconds: time, preferredTimescale: 60000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            Task { @MainActor in if self?.seekNumber == number { self?.seeking = false } }
+    func finishScrubbing() {
+        guard var request = requestedSeek, let player else { return }
+        request.precise = true; requestedSeek = request; seeking = true
+        if let next = seekQueue.submit(request) { performSeek(player, request: next, number: seekNumber) }
+    }
+    private func performSeek(_ player: AVPlayer, request: VideoPreviewSeek, number: Int) {
+        player.currentItem?.forwardPlaybackEndTime = request.end.map { CMTime(seconds: $0, preferredTimescale: 60000) } ?? .invalid
+        let tolerance = request.precise ? 0 : min(0.25, max(0, (request.end ?? (request.time+0.25))-request.time))
+        player.seek(to: CMTime(seconds: request.time, preferredTimescale: 60000), toleranceBefore: .zero, toleranceAfter: CMTime(seconds: tolerance, preferredTimescale: 60000)) { [weak self, weak player] _ in
+            Task { @MainActor in
+                guard let self, let player, self.seekNumber == number, self.player === player else { return }
+                if let next = self.seekQueue.complete() { self.performSeek(player, request: next, number: number) }
+                else { self.seeking = false }
+            }
         }
     }
     func play(start: Double, end: Double) {
         guard let player else { return }
         if position < start || position >= end - 0.001 { seek(start, end: end) }
-        else if pendingSeek != nil { seek(position, end: end) }
+        else if seeking { seek(position, end: end) }
         player.currentItem?.forwardPlaybackEndTime = CMTime(seconds: end, preferredTimescale: 60000)
         player.play(); playing = true
     }
     func pause() { player?.pause(); playing = false }
     func stop() {
-        pause(); seekNumber += 1; pendingSeek?.cancel(); pendingSeek = nil; seeking = false
+        pause(); seekNumber += 1; seekQueue.reset(); requestedSeek = nil; seeking = false
         if let observer { player?.removeTimeObserver(observer); self.observer = nil }
         player?.currentItem?.cancelPendingSeeks()
         player?.currentItem?.asset.cancelLoading()
@@ -99,6 +104,7 @@ struct VideoEditorTimeline: View {
     @Binding var start: Double
     @Binding var end: Double
     @Binding var position: Double
+    var scrubbingEnded: () -> Void = {}
     private let padding = 18.0
     var body: some View {
         VStack(spacing: 4) {
@@ -116,7 +122,7 @@ struct VideoEditorTimeline: View {
                 ZStack(alignment: .topLeading) {
                     thumbnails.frame(width: width, height: 70).clipped().offset(x: padding, y: 5)
                         .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("videoEditorTimeline")).onChanged { value in position = min(duration, max(0, (value.location.x-padding)/width*duration)) })
+                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("videoEditorTimeline")).onChanged { value in position = min(duration, max(0, (value.location.x-padding)/width*duration)) }.onEnded { _ in scrubbingEnded() })
                     if hasSelection {
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*start/duration, height: 70).offset(x: padding, y: 5).allowsHitTesting(false)
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*(1-end/duration), height: 70).offset(x: padding+width*end/duration, y: 5).allowsHitTesting(false)
@@ -128,9 +134,9 @@ struct VideoEditorTimeline: View {
                             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                                 if windowOrigin == nil { windowOrigin = start }
                                 start = (windowOrigin ?? start)+value.translation.width/width*duration
-                            }.onEnded { _ in windowOrigin = nil })
+                            }.onEnded { _ in windowOrigin = nil; scrubbingEnded() })
                             .accessibilityLabel("Move trim window")
-                            .accessibilityAdjustableAction { direction in start += direction == .increment ? 0.1 : -0.1 }
+                            .accessibilityAdjustableAction { direction in start += direction == .increment ? 0.1 : -0.1; scrubbingEnded() }
                     } else {
                     handle("Start", time: $start, color: .yellow, y: 20, width: width)
                     handle("End", time: $end, color: .orange, y: 60, width: width)
@@ -173,10 +179,10 @@ struct VideoEditorTimeline: View {
             .position(x: padding+width*time.wrappedValue/duration, y: y)
             .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("videoEditorTimeline")).onChanged { value in
                 time.wrappedValue = min(duration, max(0, (value.location.x-padding)/width*duration))
-            })
+            }.onEnded { _ in scrubbingEnded() })
             .accessibilityLabel("Trim \(title.lowercased())")
             .accessibilityValue(videoEditorTime(time.wrappedValue))
-            .accessibilityAdjustableAction { direction in time.wrappedValue += direction == .increment ? 0.1 : -0.1 }
+            .accessibilityAdjustableAction { direction in time.wrappedValue += direction == .increment ? 0.1 : -0.1; scrubbingEnded() }
     }
 }
 
