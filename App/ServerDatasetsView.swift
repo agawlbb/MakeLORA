@@ -448,7 +448,13 @@ private struct DatasetSourceViewer: View {
             }
             .navigationTitle(source.name)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { if video, let url = source.originalURL { player = AVPlayer(url: url) } }
+            .task {
+                if video, let url = source.originalURL {
+                    let item = AVPlayerItem(url: url)
+                    item.preferredForwardBufferDuration = 1
+                    player = AVPlayer(playerItem: item)
+                }
+            }
             .task {
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -461,7 +467,10 @@ private struct DatasetSourceViewer: View {
                     }
                 }
             }
-            .onDisappear { player?.pause() }
+            .onDisappear {
+                player?.pause(); player?.currentItem?.asset.cancelLoading()
+                player?.replaceCurrentItem(with: nil); player = nil
+            }
             .simultaneousGesture(TapGesture().onEnded { store.noteActivity() })
         }
     }

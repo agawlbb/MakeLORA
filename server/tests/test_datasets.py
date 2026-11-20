@@ -52,7 +52,13 @@ class DatasetTests(unittest.TestCase):
                     self.send_header('Content-Type', 'video/mp4'); self.send_header('Content-Length', str(len(raw))); self.send_header('Accept-Ranges', 'bytes')
                     if status == 206: self.send_header('Content-Range', f'bytes {first}-{last}/{len(ORIGINAL)}')
                     self.end_headers()
-                    if self.command != 'HEAD': self.wfile.write(raw)
+                    if self.command != 'HEAD':
+                        gate = state.get('stream_gate')
+                        if gate is not None:
+                            self.wfile.write(raw[:1024]); self.wfile.flush()
+                            gate.wait(timeout=4)
+                            self.wfile.write(raw[1024:])
+                        else: self.wfile.write(raw)
                     return
                 if route.path == '/v1/datasets/source/info':
                     return self.respond(200, {'duration': 10, 'width': 1920, 'height': 1080, 'caption': 'Fixture'})
@@ -92,7 +98,7 @@ class DatasetTests(unittest.TestCase):
         if (($_SERVER['HTTP_AUTHORIZATION'] ?? '')!=='Bearer '.str_repeat('b',64)) fail('Unauthorized',401);
         datasetsAPI($_GET['action'],['id'=>str_repeat('d',32),'status'=>'active']);
         ''' % (json.dumps(str(cls.private)), json.dumps(cls.base), json.dumps(str(ROOT / 'src/datasets.php'))))
-        cls.php = subprocess.Popen(['php', '-d', f'curl.cainfo={cert}', '-S', f'127.0.0.1:{port}', str(router)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cls.php = subprocess.Popen(['php', '-d', 'output_buffering=1048576', '-d', f'curl.cainfo={cert}', '-S', f'127.0.0.1:{port}', str(router)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
                 with socket.create_connection(('127.0.0.1', port), timeout=.1): break
@@ -118,6 +124,23 @@ class DatasetTests(unittest.TestCase):
         clip = {'id': 'c' * 32, 'videoID': 'a' * 32, 'start': 0, 'end': 10, 'caption': 'Fixture'}
         status, p = self.api('dataset_save', {'revision': p['revision'], 'name': p['name'], 'clips': [clip]}, id=p['id']); self.assertEqual(status, 200)
         return p
+    def test_original_range_streams_before_upstream_finishes(self):
+        p = self.prepared()
+        gate = threading.Event()
+        self.state['stream_gate'] = gate
+        try:
+            request = urllib.request.Request(p['videos'][0]['sourceURL'], headers={'Range': 'bytes=0-8191'})
+            with urllib.request.urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 206)
+                self.assertEqual(response.headers['Content-Range'], f'bytes 0-8191/{len(ORIGINAL)}')
+                self.assertEqual(response.read(1024), ORIGINAL[:1024])
+                self.assertFalse(gate.is_set())
+                gate.set()
+                self.assertEqual(response.read(), ORIGINAL[1024:8192])
+        finally:
+            gate.set()
+            self.state.pop('stream_gate', None)
+
     def test_uniform_clip_duration(self):
         p = self.prepared()
         self.assertEqual(p['clipDuration'], 5)

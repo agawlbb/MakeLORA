@@ -5,6 +5,8 @@ import MakeLORACore
 struct VideoEditorMedia {
     let url: URL
     var thumbnails: [URL]? = nil
+    // Frame extraction at distant timestamps opens independent network readers.
+    var canExtractTimelineFrames: Bool { url.isFileURL }
 }
 
 @MainActor final class VideoEditorPlayback: ObservableObject {
@@ -14,9 +16,15 @@ struct VideoEditorMedia {
     private var observer: Any?
     private var seeking = false
     private var seekNumber = 0
-    func load(_ url: URL, at time: Double) {
+    private var pendingSeek: Task<Void, Never>?
+    func load(_ url: URL, at time: Double, end: Double? = nil) {
         stop()
-        let current = AVPlayer(url: url); player = current
+        let item = AVPlayerItem(url: url)
+        // This is a preview, so prefer a small buffer over reading far ahead.
+        item.preferredForwardBufferDuration = 1
+        let current = AVPlayer(playerItem: item)
+        current.automaticallyWaitsToMinimizeStalling = false
+        player = current
         observer = current.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self, weak current] time in
             Task { @MainActor in
                 guard let self, self.player === current else { return }
@@ -24,28 +32,43 @@ struct VideoEditorMedia {
                 self.playing = (current?.rate ?? 0) > 0
             }
         }
-        seek(time)
+        seek(time, end: end)
     }
-    func seek(_ time: Double) {
+    func seek(_ time: Double, end: Double? = nil, coalescing: Bool = false) {
         guard time.isFinite, let player else { return }
         pause(); position = max(0, time); seeking = true; seekNumber += 1
         let number = seekNumber
-        player.currentItem?.forwardPlaybackEndTime = .invalid
+        pendingSeek?.cancel(); pendingSeek = nil
+        player.currentItem?.forwardPlaybackEndTime = end.map { CMTime(seconds: $0, preferredTimescale: 60000) } ?? .invalid
         player.currentItem?.cancelPendingSeeks()
-        player.seek(to: CMTime(seconds: position, preferredTimescale: 60000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        let target = position
+        if coalescing {
+            pendingSeek = Task { [weak self, weak player] in
+                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+                guard let self, let player, self.seekNumber == number else { return }
+                self.pendingSeek = nil
+                self.performSeek(player, to: target, number: number)
+            }
+        } else { performSeek(player, to: target, number: number) }
+    }
+    private func performSeek(_ player: AVPlayer, to time: Double, number: Int) {
+        player.seek(to: CMTime(seconds: time, preferredTimescale: 60000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in if self?.seekNumber == number { self?.seeking = false } }
         }
     }
     func play(start: Double, end: Double) {
         guard let player else { return }
-        if position < start || position >= end - 0.001 { seek(start) }
+        if position < start || position >= end - 0.001 { seek(start, end: end) }
+        else if pendingSeek != nil { seek(position, end: end) }
         player.currentItem?.forwardPlaybackEndTime = CMTime(seconds: end, preferredTimescale: 60000)
         player.play(); playing = true
     }
     func pause() { player?.pause(); playing = false }
     func stop() {
-        pause(); seekNumber += 1
+        pause(); seekNumber += 1; pendingSeek?.cancel(); pendingSeek = nil; seeking = false
         if let observer { player?.removeTimeObserver(observer); self.observer = nil }
+        player?.currentItem?.cancelPendingSeeks()
+        player?.currentItem?.asset.cancelLoading()
         player?.replaceCurrentItem(with: nil); player = nil
     }
 }
@@ -116,7 +139,7 @@ struct VideoEditorTimeline: View {
                     Rectangle().fill(.white).frame(width: 2, height: 80).offset(x: padding+width*min(duration,max(0,position))/duration-1).allowsHitTesting(false)
                 }.coordinateSpace(name: "videoEditorTimeline")
             }.frame(height: 80)
-            Text(hasSelection ? (fixedLength == nil ? "Drag yellow Start or orange End. Tap the pictures to move the white playhead." : "Drag the selected window to move the clip. Tap the pictures to move the white playhead.") : "Tap the pictures to choose a starting point, then select Add clip.").font(.caption2).foregroundStyle(.secondary)
+            Text(hasSelection ? (fixedLength == nil ? "Drag yellow Start or orange End. Tap the timeline to move the white playhead." : "Drag the selected window to move the clip. Tap the timeline to move the white playhead.") : "Tap the timeline to choose a starting point, then select Add clip.").font(.caption2).foregroundStyle(.secondary)
         }
     }
     private var thumbnails: some View {
@@ -126,7 +149,17 @@ struct VideoEditorTimeline: View {
                     Group {
                         if let urls = media.thumbnails, urls.indices.contains(i) {
                             AsyncImage(url: urls[i]) { image in image.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
-                        } else { VideoFrame(url: media.url, time: duration*Double(i)/8) }
+                        } else if media.canExtractTimelineFrames {
+                            VideoFrame(url: media.url, time: duration*Double(i)/8)
+                        } else {
+                            // Remote originals use a time ruler without scanning the movie.
+                            ZStack(alignment: .bottomLeading) {
+                                Color.gray.opacity(0.2)
+                                Text(videoEditorTime(duration*Double(i)/8))
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(.secondary).padding(2)
+                            }
+                        }
                     }.frame(width: proxy.size.width, height: proxy.size.height).clipped()
                 }
             }

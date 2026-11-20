@@ -78,14 +78,14 @@ struct VideoClipEditorWorkspace: View {
                 Button("Remove clip", role: .destructive) { session.removeSelected(); tab = session.selected == nil ? .clips : .trim; selectedChanged() }
             }
             .onAppear {
-                playback.load(media.url, at: selected?.start ?? 0)
+                playback.load(media.url, at: selected?.start ?? 0, end: selected?.end)
                 if let length = session.fixedLength, duration < length { error = "Source is shorter than the dataset clip length. Choose a shorter length in the dataset settings." }
             }
             .onDisappear { playback.stop() }
             .onChange(of: session.clips) { _, _ in noteActivity() }
             .onChange(of: playback.position) { _, _ in noteActivity() }
             .onChange(of: tab) { _, _ in noteActivity() }
-            .onChange(of: previewCrop) { _, value in if value { playback.seek(selected?.start ?? 0) } }
+            .onChange(of: previewCrop) { _, value in if value { playback.seek(selected?.start ?? 0, end: selected?.end) } }
             .onChange(of: scenePhase) { _, phase in if phase != .active { playback.pause() } }
             .onChange(of: tab) { _, value in if value == .crop { playback.pause() }; hideKeyboard() }
             .task(id: playback.player.map { ObjectIdentifier($0) }) { await monitorPlayback() }
@@ -229,11 +229,11 @@ struct VideoClipEditorWorkspace: View {
         let scale = 480/min(width,height)
         return "Export: \(Int((width*scale/2).rounded())*2) × \(Int((height*scale/2).rounded())*2) · 480p"
     }
-    private var startBinding: Binding<Double> { Binding(get: { selected?.start ?? 0 }, set: { value in session.setStart(value); playback.seek(selected?.start ?? 0); notice = nil }) }
-    private var endBinding: Binding<Double> { Binding(get: { selected?.end ?? duration }, set: { value in session.setEnd(value); playback.seek(max(selected?.start ?? 0, (selected?.end ?? duration)-0.033)); notice = nil }) }
-    private var positionBinding: Binding<Double> { Binding(get: { min(duration,max(0,playback.position)) }, set: { playback.seek(previewCrop ? min(selected?.end ?? duration, max(selected?.start ?? 0, $0)) : min(duration,max(0,$0))) }) }
+    private var startBinding: Binding<Double> { Binding(get: { selected?.start ?? 0 }, set: { value in session.setStart(value); playback.seek(selected?.start ?? 0, end: selected?.end, coalescing: true); notice = nil }) }
+    private var endBinding: Binding<Double> { Binding(get: { selected?.end ?? duration }, set: { value in session.setEnd(value); playback.seek(max(selected?.start ?? 0, (selected?.end ?? duration)-0.033), end: selected?.end, coalescing: true); notice = nil }) }
+    private var positionBinding: Binding<Double> { Binding(get: { min(duration,max(0,playback.position)) }, set: { playback.seek(previewCrop ? min(selected?.end ?? duration, max(selected?.start ?? 0, $0)) : min(duration,max(0,$0)), end: previewCrop ? selected?.end : nil, coalescing: true) }) }
     private var cropBinding: Binding<Crop> { Binding(get: { crop }, set: { value in session.edit { $0.crop = value }; notice = nil }) }
-    private func selectedChanged() { shape = .free; previewCrop = false; notice = nil; error = nil; hideKeyboard(); playback.seek(selected?.start ?? playback.position) }
+    private func selectedChanged() { shape = .free; previewCrop = false; notice = nil; error = nil; hideKeyboard(); playback.seek(selected?.start ?? playback.position, end: selected?.end) }
     private func addClip() { hideKeyboard(); session.add(at: playback.position); selectedChanged(); tab = .trim }
     private func leave() { hideKeyboard(); playback.pause(); if session.hasChanges { confirmLeave = true } else { dismiss() } }
     private func hideKeyboard() { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
@@ -270,7 +270,7 @@ struct VideoClipEditorWorkspace: View {
         refreshing = true; playbackError = nil
         Task {
             defer { refreshing = false }
-            do { let value = try await action(); media = value; playback.load(value.url, at: playback.position) }
+            do { let value = try await action(); media = value; playback.load(value.url, at: playback.position, end: previewCrop ? selected?.end : nil) }
             catch { playbackError = error.localizedDescription }
         }
     }

@@ -66,14 +66,23 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
         $headers[]='Idempotency-Key: '.$key;$headers[]='X-Content-SHA256: '.$hash;
     }
     if (!$upload && isset($_SERVER['HTTP_RANGE'])) $headers[]='Range: '.$_SERVER['HTTP_RANGE'];
+    if (!$upload) {
+        // A range response must reach the player immediately. Keeping it in a
+        // PHP/proxy buffer delays seeks and keeps abandoned upstream reads alive.
+        ini_set('zlib.output_compression','0');
+        while (ob_get_level()>0) { if (!ob_end_flush()) break; }
+        header('X-Accel-Buffering: no');
+    }
     $curl=filebeansCurl($method,$route,$query,$headers);if ($method==='HEAD') curl_setopt($curl,CURLOPT_NOBODY,true);$status=0;$sent=false;$error='';
     curl_setopt_array($curl,[CURLOPT_TIMEOUT=>3600,CURLOPT_LOW_SPEED_LIMIT=>1,CURLOPT_LOW_SPEED_TIME=>120,CURLOPT_RETURNTRANSFER=>false,
         CURLOPT_HEADERFUNCTION=>static function($c,$line) use (&$status) {
             if (preg_match('/^HTTP\/\S+ (\d+)/',$line,$m)) $status=(int)$m[1];
             if ($status>=200&&$status<300&&preg_match('/^(Content-Type|Content-Length|Content-Range|Accept-Ranges|ETag):/i',$line)) header(trim($line));
             return strlen($line);
-        },CURLOPT_WRITEFUNCTION=>static function($c,$bytes) use (&$status,&$sent,&$error) {
-            if ($status>=200&&$status<300) { if (!$sent) { http_response_code($status);header('Cache-Control: private, no-store');$sent=true; } echo $bytes; }
+        },CURLOPT_WRITEFUNCTION=>static function($c,$bytes) use (&$status,&$sent,&$error,$upload) {
+            if ($status>=200&&$status<300) { if (!$sent) { http_response_code($status);header('Cache-Control: private, no-store');$sent=true; } echo $bytes;
+                if (!$upload) { flush();if (connection_aborted()) return 0; }
+            }
             elseif (strlen($error)<8192) $error.=substr($bytes,0,8192-strlen($error));
             return strlen($bytes);
         }]);

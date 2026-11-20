@@ -455,3 +455,19 @@ Validate in the development container with PHP lint and
 `python3 -m unittest discover -s server/tests -p 'test_*.py'`. The dataset suite
 uses a synthetic HTTPS FileBeans server, authenticated requests, uploads, source
 revision conflicts, and lock/unlock failures; no production media is used.
+
+### Large-video editing
+
+Remote clip timelines show time markers, or supplied thumbnail images, without
+starting frame extractors across the original video. Local files retain timeline
+frame extraction. Editor seeks are coalesced over 120 ms while dragging, preview
+players prefer a one-second forward buffer, and closing a source viewer/editor
+releases its player item and cancels asset loading. Crop preview seeks retain the
+trim endpoint. These buffering preferences reduce read-ahead; AVFoundation still
+needs container metadata and the keyframes needed to decode the selected frames.
+
+The authenticated media proxy forwards byte ranges and flushes each received
+chunk instead of accumulating PHP output, disables proxy buffering where
+supported, and stops its upstream transfer when it detects a disconnected player.
+The dataset API suite verifies an initial partial-range chunk is delivered while
+the upstream response is still waiting, even with PHP output buffering enabled.
