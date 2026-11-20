@@ -21,14 +21,21 @@ public struct VideoEditSaveResult: Sendable {
 
 public struct VideoEditingSession: Sendable {
     public let duration: Double
+    public let fixedLength: Double?
     public private(set) var baseline: [VideoEditingClip]
     public private(set) var clips: [VideoEditingClip]
     public var selectedID: String?
     public var selected: VideoEditingClip? { clips.first { $0.id == selectedID } }
     public var hasChanges: Bool { clips != baseline }
     public var minimumLength: Double { min(0.1, duration) }
-    public init(duration: Double, clips: [VideoEditingClip], selectedID: String?) {
+    public init(duration: Double, clips: [VideoEditingClip], selectedID: String?, fixedLength: Double? = nil) {
+        self.fixedLength = fixedLength
         self.duration = duration; self.baseline = clips; self.clips = clips
+        if let fixedLength {
+            self.clips = clips.map { clip in
+                var value = clip; value.start = min(max(0, clip.start), max(0, duration-fixedLength)); value.end = value.start+fixedLength; return value
+            }
+        }
         self.selectedID = selectedID.flatMap { id in clips.contains { $0.id == id } ? id : nil } ?? clips.first?.id
     }
     public mutating func edit(_ work: (inout VideoEditingClip) -> Void) {
@@ -37,21 +44,28 @@ public struct VideoEditingSession: Sendable {
     }
     public mutating func setStart(_ time: Double) {
         guard time.isFinite, let selected else { return }
+        if let fixedLength {
+            let start = min(max(0, time), max(0, duration-fixedLength))
+            edit { $0.start = start; $0.end = start+fixedLength }; return
+        }
         let value = min(max(0, time), max(0, selected.end - minimumLength))
         edit { $0.start = value }
     }
     public mutating func setEnd(_ time: Double) {
         guard time.isFinite, let selected else { return }
+        if let fixedLength { setStart(time-fixedLength); return }
         let value = min(duration, max(selected.start + minimumLength, time))
         edit { $0.end = value }
     }
     @discardableResult public mutating func add(at time: Double, fallbackToBeginning: Bool = true) -> Bool {
         guard time.isFinite, duration > 0 else { return false }
+        if let fixedLength, duration < fixedLength { return false }
         var start = max(0, min(duration, time))
+        if let fixedLength { start = min(start, duration-fixedLength) }
         if duration - start < minimumLength {
             guard fallbackToBeginning else { return false }; start = 0
         }
-        let clip = VideoEditingClip(id: VideoEditingClip.identifier(), start: start, end: min(duration, start + 5))
+        let clip = VideoEditingClip(id: VideoEditingClip.identifier(), start: start, end: min(duration, start + (fixedLength ?? 5)))
         clips.append(clip); selectedID = clip.id; return true
     }
     public mutating func duplicate() {

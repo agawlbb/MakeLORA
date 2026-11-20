@@ -123,6 +123,16 @@ private struct ServerDatasetWorkspace: View {
                 Text(project.model == "wan" ? "Clips" : "Pairs").tag("Edits")
                 Text("Export").tag("Export")
             }.pickerStyle(.segmented).listRowBackground(Color.clear)
+            if project.model == "wan" {
+                Section("Dataset clip length") {
+                    Stepper(value: Binding(get: { project.clipDuration ?? 5 }, set: { value in
+                        Task { await store.perform { try await store.save(project.clips, revision: project.revision, clipDuration: value) } }
+                    }), in: 0.5...60, step: 0.5) {
+                        Text("\(project.clipDuration ?? 5, specifier: "%.1f") seconds")
+                    }.disabled(project.processing)
+                    Text("Applies to every clip. Sources must be at least this long.").font(.caption)
+                }
+            }
             if area == "Sources" {
             Section {
                 Menu {

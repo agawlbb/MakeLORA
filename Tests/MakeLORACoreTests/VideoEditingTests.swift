@@ -4,6 +4,22 @@ import XCTest
 final class VideoEditingTests: XCTestCase {
     private func clip(_ id: String = "first", start: Double = 10, end: Double = 20) -> VideoEditingClip { VideoEditingClip(id: id, start: start, end: end, caption: "Original caption") }
 
+    func testFixedWindowKeepsLengthAtSourceEdges() {
+        var session = VideoEditingSession(duration: 20, clips: [clip()], selectedID: "first", fixedLength: 5)
+        XCTAssertEqual(session.selected?.end, 15)
+        session.setStart(19)
+        XCTAssertEqual(session.selected?.start, 15)
+        XCTAssertEqual(session.selected?.end, 20)
+        session.setStart(-1)
+        XCTAssertEqual(session.selected?.start, 0)
+        XCTAssertEqual(session.selected?.end, 5)
+        XCTAssertTrue(session.add(at: 19))
+        XCTAssertEqual(session.selected?.start, 15)
+        XCTAssertEqual(session.selected?.end, 20)
+        var short = VideoEditingSession(duration: 4, clips: [], selectedID: nil, fixedLength: 5)
+        XCTAssertFalse(short.add(at: 0))
+    }
+
     func testTrimEndpointsNeverMoveEachOtherAndCannotCross() {
         var session = VideoEditingSession(duration: 100, clips: [clip()], selectedID: "first")
         session.setStart(15)

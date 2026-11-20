@@ -13,6 +13,7 @@ struct ServerDataset: Decodable, Identifiable {
     var name: String
     let revision: Int
     let model: String
+    var clipDuration: Double? = nil
     var destination: FileBeansLocation? = nil
     var videos: [ServerDatasetVideo]
     let clips: [ServerDatasetClip]
@@ -226,10 +227,10 @@ private struct DatasetServiceError: Decodable, LocalizedError {
         guard let project else { return }
         self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_cancel_export", id: project.id, body: [:]))
     }
-    func save(_ clips: [ServerDatasetClip], name: String? = nil, revision: Int, reviewedSources: [String] = []) async throws {
+    func save(_ clips: [ServerDatasetClip], name: String? = nil, revision: Int, reviewedSources: [String] = [], clipDuration: Double? = nil) async throws {
         guard let project else { return }
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(clips))
-        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: project.id, body: ["clips": encoded, "name": name ?? project.name, "revision": revision, "reviewedSources": reviewedSources]))
+        self.project = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset_save", id: project.id, body: ["clipDuration": clipDuration ?? project.clipDuration ?? 5, "clips": encoded, "name": name ?? project.name, "revision": revision, "reviewedSources": reviewedSources]))
     }
     func saveClip(_ clip: ServerDatasetClip, original: ServerDatasetClip?, projectID: String) async throws {
         let latest = try JSONDecoder().decode(ServerDataset.self, from: await request("dataset", id: projectID))

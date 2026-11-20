@@ -118,6 +118,20 @@ class DatasetTests(unittest.TestCase):
         clip = {'id': 'c' * 32, 'videoID': 'a' * 32, 'start': 0, 'end': 10, 'caption': 'Fixture'}
         status, p = self.api('dataset_save', {'revision': p['revision'], 'name': p['name'], 'clips': [clip]}, id=p['id']); self.assertEqual(status, 200)
         return p
+    def test_uniform_clip_duration(self):
+        p = self.prepared()
+        self.assertEqual(p['clipDuration'], 5)
+        self.assertEqual(p['clips'][0]['end'] - p['clips'][0]['start'], 5)
+        body = {'revision': p['revision'], 'name': p['name'], 'clips': p['clips'], 'clipDuration': 3}
+        status, changed = self.api('dataset_save', body, id=p['id'])
+        self.assertEqual(status, 200)
+        self.assertEqual(changed['clips'][0]['end'] - changed['clips'][0]['start'], 3)
+        body.update(revision=changed['revision'], clipDuration=60)
+        status, _ = self.api('dataset_save', body, id=p['id'])
+        self.assertEqual(status, 400)
+        status, unchanged = self.api('dataset', id=p['id'])
+        self.assertEqual(unchanged['clipDuration'], 3)
+
     def test_registration_and_relink_only_record_original(self):
         jobs = dict(self.state['jobs'])
         status, p = self.api('dataset_create', {'name': 'Original', 'model': 'wan'})

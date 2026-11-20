@@ -28,9 +28,9 @@ struct VideoClipEditorWorkspace: View {
     @State private var playbackError: String?
     @State private var confirmLeave = false
     @State private var confirmDelete = false
-    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, newClipAt: Double? = nil, newClipCaption: String = "", refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
+    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, fixedLength: Double? = nil, newClipAt: Double? = nil, newClipCaption: String = "", refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
         self.forceSave = forceSave; self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
-        var initial = VideoEditingSession(duration: duration, clips: clips, selectedID: selectedID)
+        var initial = VideoEditingSession(duration: duration, clips: clips, selectedID: selectedID, fixedLength: fixedLength)
         if let time = newClipAt { initial.add(at: time); initial.edit { $0.caption = newClipCaption } }
         else if initial.clips.isEmpty { initial.add(at: 0) }
         _session = State(initialValue: initial); _media = State(initialValue: media)
@@ -77,11 +77,15 @@ struct VideoClipEditorWorkspace: View {
             .confirmationDialog("Remove this clip? The source video and other clips are kept. Save all to apply the removal.", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Remove clip", role: .destructive) { session.removeSelected(); tab = session.selected == nil ? .clips : .trim; selectedChanged() }
             }
-            .onAppear { playback.load(media.url, at: selected?.start ?? 0) }
+            .onAppear {
+                playback.load(media.url, at: selected?.start ?? 0)
+                if let length = session.fixedLength, duration < length { error = "Source is shorter than the dataset clip length. Choose a shorter length in the dataset settings." }
+            }
             .onDisappear { playback.stop() }
             .onChange(of: session.clips) { _, _ in noteActivity() }
             .onChange(of: playback.position) { _, _ in noteActivity() }
             .onChange(of: tab) { _, _ in noteActivity() }
+            .onChange(of: previewCrop) { _, value in if value { playback.seek(selected?.start ?? 0) } }
             .onChange(of: scenePhase) { _, phase in if phase != .active { playback.pause() } }
             .onChange(of: tab) { _, value in if value == .crop { playback.pause() }; hideKeyboard() }
             .task(id: playback.player.map { ObjectIdentifier($0) }) { await monitorPlayback() }
@@ -111,7 +115,7 @@ struct VideoClipEditorWorkspace: View {
                 }.accessibilityLabel(previewCrop ? "Cropped video preview" : "Source video preview")
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             playbackButtons
-            VideoEditorTimeline(media: media, duration: duration, hasSelection: selected != nil, start: startBinding, end: endBinding, position: positionBinding)
+            VideoEditorTimeline(media: media, duration: duration, hasSelection: selected != nil, fixedLength: session.fixedLength, start: startBinding, end: endBinding, position: positionBinding)
         }
     }
     private var playbackButtons: some View {
@@ -154,13 +158,15 @@ struct VideoClipEditorWorkspace: View {
     }
     private func trimControls(_ clip: VideoEditingClip) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Drag the two timeline handles independently. The white playhead only changes the frame you’re viewing.").font(.callout).foregroundStyle(.secondary)
+            Text(session.fixedLength == nil ? "Drag the two timeline handles independently. The white playhead changes the frame you’re viewing." : "Move the selected window along the timeline. The white playhead changes the frame you’re viewing.").font(.callout).foregroundStyle(.secondary)
             HStack { Text("Start · seconds"); Spacer(); TextField("Start seconds", value: startBinding, format: .number.precision(.fractionLength(3))).keyboardType(.decimalPad).multilineTextAlignment(.trailing).textFieldStyle(.roundedBorder).frame(maxWidth: 130) }
             HStack { Button("−0.1 s") { startBinding.wrappedValue -= 0.1 }; Button("Set start here") { startBinding.wrappedValue = playback.position }; Button("+0.1 s") { startBinding.wrappedValue += 0.1 } }.font(.caption).buttonStyle(.bordered)
+            if session.fixedLength == nil {
             HStack { Text("End · seconds"); Spacer(); TextField("End seconds", value: endBinding, format: .number.precision(.fractionLength(3))).keyboardType(.decimalPad).multilineTextAlignment(.trailing).textFieldStyle(.roundedBorder).frame(maxWidth: 130) }
             HStack { Button("−0.1 s") { endBinding.wrappedValue -= 0.1 }; Button("Set end here") { endBinding.wrappedValue = playback.position }; Button("+0.1 s") { endBinding.wrappedValue += 0.1 } }.font(.caption).buttonStyle(.bordered)
+            }
             Text(String(format: "Clip length: %.3f seconds", clip.end-clip.start)).monospacedDigit()
-            Slider(value: positionBinding, in: 0...duration).accessibilityLabel("Source video playhead")
+            Slider(value: positionBinding, in: (previewCrop ? (selected?.start ?? 0) : 0)...(previewCrop ? (selected?.end ?? duration) : duration)).accessibilityLabel("Source video playhead")
             Button("Save and add another clip", systemImage: "plus.rectangle.on.rectangle") { save(addAnother: true) }.buttonStyle(.borderedProminent)
             Text("Saves every draft clip. The next short selection starts at this clip’s end. Overlapping clips are also allowed.").font(.caption).foregroundStyle(.secondary)
         }
@@ -225,7 +231,7 @@ struct VideoClipEditorWorkspace: View {
     }
     private var startBinding: Binding<Double> { Binding(get: { selected?.start ?? 0 }, set: { value in session.setStart(value); playback.seek(selected?.start ?? 0); notice = nil }) }
     private var endBinding: Binding<Double> { Binding(get: { selected?.end ?? duration }, set: { value in session.setEnd(value); playback.seek(max(selected?.start ?? 0, (selected?.end ?? duration)-0.033)); notice = nil }) }
-    private var positionBinding: Binding<Double> { Binding(get: { min(duration,max(0,playback.position)) }, set: { playback.seek(min(duration,max(0,$0))) }) }
+    private var positionBinding: Binding<Double> { Binding(get: { min(duration,max(0,playback.position)) }, set: { playback.seek(previewCrop ? min(selected?.end ?? duration, max(selected?.start ?? 0, $0)) : min(duration,max(0,$0))) }) }
     private var cropBinding: Binding<Crop> { Binding(get: { crop }, set: { value in session.edit { $0.crop = value }; notice = nil }) }
     private func selectedChanged() { shape = .free; previewCrop = false; notice = nil; error = nil; hideKeyboard(); playback.seek(selected?.start ?? playback.position) }
     private func addClip() { hideKeyboard(); session.add(at: playback.position); selectedChanged(); tab = .trim }
@@ -235,7 +241,7 @@ struct VideoClipEditorWorkspace: View {
         guard !saving else { return }
         hideKeyboard(); playback.pause(); error = nil
         let nextStart = selected?.end ?? playback.position
-        if !session.hasChanges {
+        if !session.hasChanges && !forceSave {
             if close { dismiss() }
             else if addAnother { beginNextClip(at: nextStart) }
             return

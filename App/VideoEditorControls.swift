@@ -71,6 +71,8 @@ struct VideoEditorTimeline: View {
     let media: VideoEditorMedia
     let duration: Double
     let hasSelection: Bool
+    var fixedLength: Double? = nil
+    @State private var windowOrigin: Double?
     @Binding var start: Double
     @Binding var end: Double
     @Binding var position: Double
@@ -96,13 +98,25 @@ struct VideoEditorTimeline: View {
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*start/duration, height: 70).offset(x: padding, y: 5).allowsHitTesting(false)
                     Rectangle().fill(.black.opacity(0.55)).frame(width: width*(1-end/duration), height: 70).offset(x: padding+width*end/duration, y: 5).allowsHitTesting(false)
                     Rectangle().stroke(.yellow, lineWidth: 2).frame(width: max(1, width*(end-start)/duration), height: 70).offset(x: padding+width*start/duration, y: 5).allowsHitTesting(false)
+                    if fixedLength != nil {
+                        Rectangle().fill(.yellow.opacity(0.15))
+                            .frame(width: max(25, width*(end-start)/duration), height: 70)
+                            .offset(x: padding+width*start/duration, y: 5)
+                            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                if windowOrigin == nil { windowOrigin = start }
+                                start = (windowOrigin ?? start)+value.translation.width/width*duration
+                            }.onEnded { _ in windowOrigin = nil })
+                            .accessibilityLabel("Move trim window")
+                            .accessibilityAdjustableAction { direction in start += direction == .increment ? 0.1 : -0.1 }
+                    } else {
                     handle("Start", time: $start, color: .yellow, y: 20, width: width)
                     handle("End", time: $end, color: .orange, y: 60, width: width)
+                    }
                     }
                     Rectangle().fill(.white).frame(width: 2, height: 80).offset(x: padding+width*min(duration,max(0,position))/duration-1).allowsHitTesting(false)
                 }.coordinateSpace(name: "videoEditorTimeline")
             }.frame(height: 80)
-            Text(hasSelection ? "Drag yellow Start or orange End. Tap the pictures to move the white playhead." : "Tap the pictures to choose a starting point, then select Add clip.").font(.caption2).foregroundStyle(.secondary)
+            Text(hasSelection ? (fixedLength == nil ? "Drag yellow Start or orange End. Tap the pictures to move the white playhead." : "Drag the selected window to move the clip. Tap the pictures to move the white playhead.") : "Tap the pictures to choose a starting point, then select Add clip.").font(.caption2).foregroundStyle(.secondary)
         }
     }
     private var thumbnails: some View {

@@ -49,6 +49,7 @@ function datasetSourcePublic(array $v,array $p,string $device): array {
     unset($v['job']);return $v;
 }
 function datasetPublic(array $p,string $device): array {
+    $p['clipDuration']=$p['clipDuration'] ?? 5.0;
     $p['videos']=array_values(array_map(static fn($v)=>datasetSourcePublic($v,$p,$device),$p['videos']));
     $p['clips']=array_values($p['clips']);$p['exportDestination']='filebeans';$p['exportURL']=null;
     $p['exportFolder']=($p['exportStatus']==='ready'&&($p['exportRevision'] ?? -1)===$p['revision']) ? ($p['exportResult']['source'].' / '.$p['exportResult']['path']) : null;
@@ -82,6 +83,20 @@ function datasetCrop(mixed $crop): ?array {
     foreach (['x','y','width','height'] as $key) if (!isset($crop[$key])||!is_numeric($crop[$key])||!is_finite((float)$crop[$key])) throw new InvalidArgumentException('Invalid crop.');
     $c=array_map('floatval',array_intersect_key($crop,array_flip(['x','y','width','height'])));
     if ($c['x']<0||$c['y']<0||$c['width']<0.05||$c['height']<0.05||$c['x']+$c['width']>1.000001||$c['y']+$c['height']>1.000001) throw new InvalidArgumentException('Crop must fit inside the source.');return $c;
+}
+function datasetClipDuration(mixed $value): float {
+    if (!is_numeric($value)||!is_finite((float)$value)||$value<0.1||$value>60) throw new InvalidArgumentException('Choose a clip length between 0.1 and 60 seconds.');
+    return (float)$value;
+}
+function datasetUniformClips(array &$p): void {
+    if ($p['model']!=='wan') return;
+    $length=datasetClipDuration($p['clipDuration'] ?? 5);
+    foreach ($p['clips'] as &$clip) {
+        $duration=$p['videos'][$clip['videoID']]['duration'] ?? 0;
+        if ($duration+0.000001<$length) throw new InvalidArgumentException('Source is shorter than the dataset clip length. Remove its clips or choose a shorter dataset length.');
+        $clip['start']=min(max(0,(float)$clip['start']),max(0,$duration-$length));
+        $clip['end']=$clip['start']+$length;
+    }unset($clip);
 }
 function datasetClip(array $clip,array $p): array {
     $result=['id'=>datasetID($clip['id'] ?? null)];$caption=$clip['caption'] ?? '';
@@ -120,7 +135,7 @@ function datasetsAPI(string $action,array $device): never {
         }
         if ($action==='dataset_create'&&$method==='POST') {
             $body=datasetBody();$model=$body['model'] ?? 'wan';if (!in_array($model,['wan','qwen'],true)) throw new InvalidArgumentException('Choose a dataset model.');
-            $id=bin2hex(random_bytes(16));$p=['id'=>$id,'name'=>datasetName($body['name'] ?? null),'model'=>$model,'sourceMode'=>'original','revision'=>0,'videos'=>[],'clips'=>[],'exportStatus'=>'none','exportError'=>null];
+            $id=bin2hex(random_bytes(16));$p=['id'=>$id,'name'=>datasetName($body['name'] ?? null),'model'=>$model,'clipDuration'=>datasetClipDuration($body['clipDuration'] ?? 5),'sourceMode'=>'original','revision'=>0,'videos'=>[],'clips'=>[],'exportStatus'=>'none','exportError'=>null];
             mkdir(datasetPath($id),0700);privateJSON(datasetPath($id).'/project.json',$p);jsonResponse(datasetPublic($p,$device['id']),201);
         }
         $id=datasetID($_GET['id'] ?? null);
@@ -168,6 +183,8 @@ function datasetsAPI(string $action,array $device): never {
             $body=datasetBody();$p=datasetUpdate($id,static function(&$p) use ($body) {
                 if (($body['revision'] ?? -1)!==$p['revision']) throw new InvalidArgumentException('Dataset changed on another device. Reload before saving.');
                 $clips=$body['clips'] ?? null;if (!is_array($clips)||count($clips)>500) throw new InvalidArgumentException('A dataset supports up to 500 clips or pairs.');
+                $p['clipDuration']=datasetClipDuration($body['clipDuration'] ?? $p['clipDuration'] ?? 5);
+                $candidate=$p;$candidate['clips']=$clips;datasetUniformClips($candidate);$clips=$candidate['clips'];
                 $validated=[];foreach ($clips as $clip) { $c=datasetClip($clip,$p);if (isset($validated[$c['id']])) throw new InvalidArgumentException('Duplicate item.');$validated[$c['id']]=$c; }
                 filebeansActivity($p);$p['clips']=$validated;$p['name']=datasetName($body['name'] ?? null);$p['revision']++;
                 foreach (($body['reviewedSources'] ?? []) as $vid) { datasetID($vid);if (isset($p['videos'][$vid])) unset($p['videos'][$vid]['reviewRequired']); }
@@ -187,6 +204,8 @@ function datasetsAPI(string $action,array $device): never {
         if ($action==='dataset_export'&&$method==='POST') {
             $body=datasetBody();$p=datasetUpdate($id,static function(&$p) use ($body) {
                 if (!$p['clips']) throw new InvalidArgumentException('Add clips or pairs first.');
+                $normalized=$p;datasetUniformClips($normalized);
+                if ($normalized['clips']!==$p['clips']) { $p['clips']=$normalized['clips'];$p['revision']++; }
                 if (in_array($p['exportStatus'],['queued','processing'],true)) return;
                 if (array_filter($p['videos'],static fn($v)=>$v['reviewRequired'] ?? false)) throw new InvalidArgumentException('Review relinked source edits and save before rendering.');
                 $dest=filebeansLocation($body['destination'] ?? $p['destination'] ?? null);

@@ -12,7 +12,7 @@ struct ServerClipEditor: View {
                 name: video.name, duration: video.duration ?? initial.end,
                 width: video.width ?? 16, height: video.height ?? 9,
                 media: VideoEditorMedia(url: url, thumbnails: video.thumbnails),
-                clips: project.clips.filter { $0.videoID == video.id }.map(\.editorClip), selectedID: initial.id,
+                clips: project.clips.filter { $0.videoID == video.id }.map(\.editorClip), selectedID: initial.id, fixedLength: project.clipDuration ?? 5,
                 newClipAt: project.clips.contains(where: { $0.id == initial.id }) ? nil : initial.start,
                 newClipCaption: initial.caption,
                 refresh: {
