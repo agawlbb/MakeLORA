@@ -87,6 +87,11 @@ struct FileBeansEntry: Decodable, Identifiable {
     var children: [FileBeansEntry]?
     var id: String { path }
     var isFolder: Bool { type == "directory" }
+    static func pickerOrder(_ lhs: FileBeansEntry, _ rhs: FileBeansEntry) -> Bool {
+        if lhs.isFolder != rhs.isFolder { return lhs.isFolder }
+        let order = lhs.name.localizedStandardCompare(rhs.name)
+        return order == .orderedSame ? lhs.path < rhs.path : order == .orderedAscending
+    }
 }
 struct FileBeansScope: Decodable, Identifiable { let name: String; var id: String { name } }
 struct FileBeansConnection: Decodable {
@@ -179,6 +184,9 @@ private struct DatasetServiceError: Decodable, LocalizedError {
     func scopes() async throws -> [FileBeansScope] {
         struct Reply: Decodable { let scopes: [FileBeansScope] }
         return try JSONDecoder().decode(Reply.self, from: await request("dataset_sources")).scopes
+    }
+    func thumbnail(_ location: FileBeansLocation) async throws -> Data {
+        try await request("dataset_thumbnail", query: location.query)
     }
     func browse(_ location: FileBeansLocation) async throws -> FileBeansEntry {
         try JSONDecoder().decode(FileBeansEntry.self, from: await request("dataset_files", query: location.query))

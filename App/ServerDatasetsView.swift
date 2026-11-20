@@ -366,10 +366,21 @@ struct FileBeansBrowser: View {
                             if entry.isFolder { self.location = item }
                             else if selection.contains(item) { selection.remove(item) }
                             else { if single { selection = [] }; if selection.count < 100 { selection.insert(item) } }
-                        } label: { Label(entry.name, systemImage: entry.isFolder ? "folder" : selection.contains(item) ? "checkmark.circle.fill" : "circle") }
+                        } label: {
+                            HStack(spacing: 12) {
+                                if entry.isFolder {
+                                    Image(systemName: "folder").frame(width: 56, height: 44)
+                                } else {
+                                    FileBeansPickerThumbnail(store: store, location: item, revision: entry.revision, video: entry.type.hasPrefix("video/"))
+                                }
+                                Text(entry.name).multilineTextAlignment(.leading)
+                                Spacer()
+                                if !entry.isFolder { Image(systemName: selection.contains(item) ? "checkmark.circle.fill" : "circle") }
+                            }
+                        }
                     }
                 } else {
-                    ForEach(scopes) { scope in Button(scope.name, systemImage: "externaldrive") { location = FileBeansLocation(source: scope.name, path: "/") } }
+                    ForEach(scopes.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { scope in Button(scope.name, systemImage: "externaldrive") { location = FileBeansLocation(source: scope.name, path: "/") } }
                 }
                 if loading { ProgressView() }
                 if let error { Text(error).foregroundStyle(.red); Button("Retry") { Task { await load() } } }
@@ -390,10 +401,35 @@ struct FileBeansBrowser: View {
         let requested = location; loading = true; error = nil
         defer { if location == requested { loading = false } }
         do {
-            if let requested { let reply = try await store.browse(requested); if location == requested { entries = reply.children ?? [] } }
+            if let requested { let reply = try await store.browse(requested); if location == requested { entries = (reply.children ?? []).sorted(by: FileBeansEntry.pickerOrder) } }
             else { scopes = try await store.scopes() }
         } catch is CancellationError { }
         catch { if location == requested { self.error = error.localizedDescription } }
+    }
+}
+
+private struct FileBeansPickerThumbnail: View {
+    @ObservedObject var store: ServerDatasetStore
+    let location: FileBeansLocation
+    let revision: String
+    let video: Bool
+    @State private var image: UIImage?
+    var body: some View {
+        ZStack {
+            Color.gray.opacity(0.15)
+            if let image { Image(uiImage: image).resizable().scaledToFill() }
+            else { Image(systemName: video ? "video" : "photo").foregroundStyle(.secondary) }
+        }
+        .frame(width: 56, height: 44).clipped().clipShape(RoundedRectangle(cornerRadius: 5))
+        .accessibilityHidden(true)
+        .task(id: location.source + "|" + location.path + "|" + revision) {
+            image = nil
+            do {
+                let data = try await store.thumbnail(location)
+                try Task.checkCancellation()
+                image = UIImage(data: data)
+            } catch { /* Keep the media icon when a thumbnail is unavailable. */ }
+        }
     }
 }
 

@@ -38,6 +38,10 @@ class DatasetTests(unittest.TestCase):
                 route = urllib.parse.urlsplit(self.path)
                 path = urllib.parse.parse_qs(route.query).get('path', ['/'])[0]
                 if state['locked']: return self.respond(423, {'code': 'locked'})
+                if route.path == '/v1/fs/thumbnail':
+                    raw = b'fixture-thumbnail'
+                    self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.send_header('Content-Length', str(len(raw)))
+                    self.end_headers(); self.wfile.write(raw); return
                 if route.path == '/v1/fs/resources':
                     if path == '/': return self.respond(200, {'type': 'directory', 'children': []})
                     return self.respond(200, {'name': path.rsplit('/', 1)[-1], 'path': path, 'revision': state['revision'], 'type': 'video/mp4', 'size': 123, 'vault': 'fixture-vault'})
@@ -140,6 +144,22 @@ class DatasetTests(unittest.TestCase):
         finally:
             gate.set()
             self.state.pop('stream_gate', None)
+
+    def test_picker_thumbnail_uses_authenticated_filebeans_proxy(self):
+        url = self.base + '/?' + urllib.parse.urlencode({'action': 'dataset_thumbnail', 'source': 'fixture', 'path': '/source.mp4'})
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            urllib.request.urlopen(url)
+        self.assertEqual(denied.exception.code, 401)
+        request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + TOKEN})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.headers['Content-Type'], 'image/jpeg')
+            self.assertEqual(response.read(), b'fixture-thumbnail')
+        status, _ = self.api('dataset_thumbnail', source='excluded', path='/source.mp4')
+        self.assertEqual(status, 400)
+        self.state['locked'] = True
+        status, reply = self.api('dataset_thumbnail', source='fixture', path='/source.mp4')
+        self.assertEqual(status, 423)
+        self.assertEqual(reply['code'], 'locked')
 
     def test_uniform_clip_duration(self):
         p = self.prepared()

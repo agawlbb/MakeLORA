@@ -26,6 +26,15 @@ private final class DatasetStubProtocol: URLProtocol {
         store.configure(DeviceCredential(server: URL(string: "https://api.fixture.invalid/MakeLORA")!, deviceID: "fixture", token: "fixture-only"))
         return store
     }
+    func testPickerSortsFoldersBeforeFilesByName() throws {
+        let names = ["zebra.mp4", "beta", "Alpha.mp4", "alpha", "clip10.mp4", "clip2.mp4"]
+        let entries = try names.map { name in
+            try JSONDecoder().decode(FileBeansEntry.self, from: JSONSerialization.data(withJSONObject: [
+                "name": name, "path": "/" + name, "type": name.contains(".") ? "video/mp4" : "directory", "revision": "fixture", "size": 0
+            ]))
+        }
+        XCTAssertEqual(entries.sorted(by: FileBeansEntry.pickerOrder).map(\.name), ["alpha", "beta", "Alpha.mp4", "clip2.mp4", "clip10.mp4", "zebra.mp4"])
+    }
     func testConnectedEmptyLibraryCreatesDatasetUsingSeparateManagementOrigin() async throws {
         var created = false
         DatasetStubProtocol.handler = { request in

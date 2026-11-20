@@ -127,6 +127,7 @@ function datasetsAPI(string $action,array $device): never {
             $reply=filebeansAPI('GET','fs/sources');$allowed=filebeansSettings()['sources'];
             $reply['scopes']=array_values(array_filter($reply['scopes'],static fn($s)=>in_array($s['name'],$allowed,true)));jsonResponse($reply);
         }
+        if ($action==='dataset_thumbnail'&&$method==='GET') filebeansProxy('GET','fs/thumbnail',filebeansLocation($_GET));
         if ($action==='dataset_files'&&$method==='GET') jsonResponse(filebeansAPI('GET','fs/resources',filebeansLocation($_GET)));
         if ($action==='dataset_upload'&&$method==='POST') filebeansProxy('POST','datasets/uploads',filebeansLocation($_GET),true);
         if ($action==='datasets'&&$method==='GET') {
