@@ -76,3 +76,30 @@ Matching MakeLORA server `3fdbcf6` and FileBeans API `b5c4c7f` are deployed and
 verified. See [deployment evidence](server/deploy/FILEBEANS-TRIAL.md). Feature
 branches remain unmerged until the owner decides to retain the change. Physical
 device capture and editing acceptance remains a user check.
+
+## Wan fixed-duration clips — TestFlight 15 (November 20, 2026)
+
+Published **0.1.0 (15)** from `b2754d1` on `main`. Wan datasets have a
+shared clip duration defaulting to five seconds, a movable fixed-length trim
+window, and crop preview restricted to the trim. Saving or exporting applies
+the shared length to all clips; sources shorter than that length are rejected.
+
+[Upload workflow](https://github.com/agawlbb/MakeLORA/actions/runs/44701281265)
+passed iPad tests, signing, and upload. Its initial group-assignment check
+received HTTP 422 after Apple processing became VALID. The documented
+[verification-only retry](https://github.com/agawlbb/MakeLORA/actions/runs/44703794638)
+passed without rebuilding or uploading again: Apple build
+`0d877453-b022-4704-a9b9-42a05d91f761` is **VALID / IN_BETA_TESTING**, with
+sole internal tester verification and automatic notification enabled.
+[Independent app validation](https://github.com/agawlbb/MakeLORA/actions/runs/44700810943)
+also passed, including Swift core tests and iPad simulator tests.
+
+Deployed the matching MakeLORA server using the existing VM-to-VPS deployment
+script, preserving private settings and datasets. The deployed dataset API
+SHA-256 matched the prepared source. Live checks passed: both current and
+compatibility device APIs returned unauthenticated HTTP 401; management and
+private-path requests with an invalid session redirected to sign-in. All 12
+synthetic dataset API tests passed before deployment. No schema migration or
+FileBeans service change was required. Physical-device editing remains a user
+acceptance check. Runner signing material was cleaned automatically; no local
+release artifacts were downloaded.
