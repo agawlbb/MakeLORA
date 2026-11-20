@@ -81,7 +81,8 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
             return strlen($line);
         },CURLOPT_WRITEFUNCTION=>static function($c,$bytes) use (&$status,&$sent,&$error,$upload) {
             if ($status>=200&&$status<300) { if (!$sent) { http_response_code($status);header('Cache-Control: private, no-store');$sent=true; } echo $bytes;
-                if (!$upload) { flush();if (connection_aborted()) return 0; }
+                if (!$upload) flush();
+                if (connection_aborted()) return 0;
             }
             elseif (strlen($error)<8192) $error.=substr($bytes,0,8192-strlen($error));
             return strlen($bytes);
@@ -92,7 +93,16 @@ function filebeansProxy(string $method,string $route,array $query=[],bool $uploa
         if ($size<1||$size>2147483647) throw new InvalidArgumentException('Choose a file no larger than 2 GiB.');
         $input=fopen('php://input','rb');curl_setopt_array($curl,[CURLOPT_UPLOAD=>true,CURLOPT_CUSTOMREQUEST=>'POST',CURLOPT_INFILE=>$input,CURLOPT_INFILESIZE=>$size]);
     }
-    $ok=curl_exec($curl);curl_close($curl);if (isset($input)) fclose($input);
+    // A disconnect must return from the write callback, not make PHP bail out
+    // inside libcurl. That bailout can leave the upstream socket open in an
+    // otherwise idle, reused PHP worker. Keep detecting aborts in the callback.
+    $previousAbort=ignore_user_abort(true);
+    try { $ok=curl_exec($curl); }
+    finally {
+        unset($curl);
+        if (isset($input)) fclose($input);
+        ignore_user_abort((bool)$previousAbort);
+    }
     if (!$sent && (!$ok||$status<200||$status>=300)) {
         // Upload conflicts concern the destination name, rather than a saved edit reference.
         filebeansError($status,$upload&&$status===409 ? ['code'=>'conflict'] : json_decode($error,true));

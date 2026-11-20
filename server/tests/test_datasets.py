@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import socket
 import ssl
+import struct
 import subprocess
 import tempfile
 import threading
@@ -52,11 +53,23 @@ class DatasetTests(unittest.TestCase):
                     if self.headers.get('Range'):
                         first, last = map(int, self.headers['Range'][6:].split('-'))
                         raw = ORIGINAL[first:last+1]; status = 206
+                    cancelled = state.get('cancelled_stream')
                     self.send_response(status)
-                    self.send_header('Content-Type', 'video/mp4'); self.send_header('Content-Length', str(len(raw))); self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Content-Type', 'video/mp4'); self.send_header('Content-Length', str(64 * 1024 * 1024 if cancelled is not None else len(raw))); self.send_header('Accept-Ranges', 'bytes')
                     if status == 206: self.send_header('Content-Range', f'bytes {first}-{last}/{len(ORIGINAL)}')
                     self.end_headers()
                     if self.command != 'HEAD':
+                        if cancelled is not None:
+                            self.connection.settimeout(3)
+                            try:
+                                for _ in range(4096):
+                                    self.wfile.write(b'x' * 16384); self.wfile.flush()
+                                    time.sleep(.002)
+                            except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                                cancelled.set()
+                            except TimeoutError:
+                                pass
+                            return
                         gate = state.get('stream_gate')
                         if gate is not None:
                             self.wfile.write(raw[:1024]); self.wfile.flush()
@@ -160,6 +173,35 @@ class DatasetTests(unittest.TestCase):
         status, reply = self.api('dataset_thumbnail', source='fixture', path='/source.mp4')
         self.assertEqual(status, 423)
         self.assertEqual(reply['code'], 'locked')
+
+    @unittest.skipUnless(Path('/proc/self/fd').is_dir(), 'Linux socket ownership check')
+    def test_cancelled_media_releases_upstream_socket_in_reused_worker(self):
+        p = self.prepared()
+        url = urllib.parse.urlsplit(p['videos'][0]['sourceURL'])
+        def socket_count():
+            count = 0
+            for fd in Path(f'/proc/{self.php.pid}/fd').iterdir():
+                try:
+                    count += str(fd.readlink()).startswith('socket:')
+                except FileNotFoundError:
+                    pass
+            return count
+        baseline = socket_count()
+        try:
+            for _ in range(3):
+                cancelled = threading.Event()
+                self.state['cancelled_stream'] = cancelled
+                with socket.create_connection((url.hostname, url.port), timeout=2) as client:
+                    client.sendall(f'GET {url.path}?{url.query} HTTP/1.0\r\nHost: localhost\r\n\r\n'.encode())
+                    self.assertTrue(client.recv(65536))
+                    client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                # A new successful request proves the same worker is idle again;
+                # a retained socket here is a leak, not a transfer still running.
+                self.assertEqual(self.api('dataset', id=p['id'])[0], 200)
+                self.assertEqual(socket_count(), baseline)
+                self.assertTrue(cancelled.wait(2), 'FileBeans did not observe upstream cancellation')
+        finally:
+            self.state.pop('cancelled_stream', None)
 
     def test_uniform_clip_duration(self):
         p = self.prepared()

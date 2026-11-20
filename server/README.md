@@ -28,6 +28,35 @@ main-page link and backup policy are tracked in `vps_admin`; keep that runbook
 current when changing infrastructure. Deployments use the canonical source and
 preserve live private state.
 
+### Media cancellation and TCP retention
+
+The November 20, 2026 investigation reproduced an upstream socket leak when a
+client disconnected during `filebeansProxy()`'s cURL write callback on PHP 8.4.27.
+PHP's default abort handling terminated execution inside the callback before its
+`connection_aborted()` check could return an error to cURL. Reused, idle Apache
+workers retained the unread HTTPS sockets after requests ended. Caddy and Docker's
+published-port proxy then retained additional queued response data.
+
+The proxy now enables `ignore_user_abort(true)` during `curl_exec()` so the
+callback can detect cancellation and return zero, allowing cURL to unwind. A
+`finally` block releases the handle and restores the prior abort setting. This
+does not continue downloading after a detected cancellation. The regression test
+`test_cancelled_media_releases_upstream_socket_in_reused_worker` verifies both
+upstream cancellation and stable worker socket counts across repeated requests;
+it fails on the original implementation.
+
+At the live inspection, five idle Apache workers retained 79 HTTPS sockets and
+about 56 MiB of socket memory. Caddy retained about 92 MiB, including 61 MiB of
+queued responses on 19 connections; Docker's host port proxy held about 170 MiB
+more. Several transfers had made no progress for over nine hours. These are
+incident measurements, not capacity targets.
+
+After an explicitly requested deployment, gracefully recycle the shared
+frontend's Apache workers to release previously leaked sockets; replacing source
+alone cannot close them. Check Apache, Caddy and host port-proxy queues and socket
+memory afterward, then verify representative media delivery and cancellation.
+Do not raise host TCP limits as a substitute for releasing these sockets.
+
 Public hosting contains only the gateway and rewrite rules under
 `public/MakeLORA`. Server source/vendor live at
 `private/makelora/app`, outside the document root. The existing private read-only
