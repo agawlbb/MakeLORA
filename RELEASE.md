@@ -103,3 +103,33 @@ synthetic dataset API tests passed before deployment. No schema migration or
 FileBeans service change was required. Physical-device editing remains a user
 acceptance check. Runner signing material was cleaned automatically; no local
 release artifacts were downloaded.
+
+## Large-video editing and FileBeans picker — TestFlight 16 (November 20, 2026)
+
+Published **0.1.0 (16)** from `3d52391` on `main`.
+[Release workflow](https://github.com/agawlbb/MakeLORA/actions/runs/44712362991)
+passed 28 iPad app tests, 25 Swift core tests, distribution signing, upload,
+Apple processing, and existing sole internal tester verification. Apple build
+`6bd9137f-5d5e-485a-8f72-2d0a0d210c71` is **VALID / IN_BETA_TESTING**, with
+automatic internal notification enabled. No verification retry was needed.
+
+Remote video timelines avoid full-video thumbnail scans, drag seeks are
+coalesced, and preview players prefer a small forward buffer. The media proxy
+flushes range responses promptly. The FileBeans picker lists folders first,
+then files, alphabetically within each group, and requests FileBeans thumbnails
+through the authenticated MakeLORA endpoint.
+
+The matching server was deployed with the existing VM-to-VPS deployment script.
+Deployed `datasets.php` and `filebeans.php` SHA-256 hashes matched the prepared
+source. Live checks verified HTTP 401 on both device API origins and the
+thumbnail endpoint, and HTTP 302 to sign-in for invalid-session management and
+private-path requests. An existing source returned an authenticated FileBeans
+thumbnail; its signed original URL returned HTTP 206 with exactly the requested
+1 KiB range. No dataset or production device records were changed by these
+checks. No schema migration or FileBeans deployment was needed.
+
+All 14 dataset API tests and source-only CI verification passed before release.
+Physical-device acceptance remains a user check: large-video editing, picker
+ordering, and thumbnail display. Runner signing files were removed by workflow
+cleanup; no local app archives, release artifacts, or temporary scripts were
+retained.
