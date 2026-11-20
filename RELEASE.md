@@ -133,3 +133,23 @@ Physical-device acceptance remains a user check: large-video editing, picker
 ordering, and thumbnail display. Runner signing files were removed by workflow
 cleanup; no local app archives, release artifacts, or temporary scripts were
 retained.
+
+## Continuous scrub previews — TestFlight 17 (November 20, 2026)
+
+Published **0.1.0 (17)** from `2d76281` on `main`.
+[Release workflow](https://github.com/agawlbb/MakeLORA/actions/runs/44719514544)
+passed 28 iPad app tests, 28 Swift core tests, signing, upload, Apple processing,
+and existing sole internal tester verification. Apple build
+`48ef60bb-73f5-4cf9-8255-faaffa605269` is **VALID / IN_BETA_TESTING**, with
+automatic internal notification enabled. No verification retry was needed.
+
+The scrub-preview fix replaces the trailing 120 ms delay with immediate,
+serialized seeks: an active frame read completes while only the latest waiting
+position is retained. Releasing the timeline or slider requests the exact final
+frame. Regression tests cover continuous dragging, latest-position selection,
+precise release, and queue reset. Remote timeline thumbnail scans remain disabled.
+
+No server code changed and no server deployment was performed. Physical-device
+acceptance remains a user check for preview updates while dragging through a
+large video. Workflow cleanup removed temporary signing material; no local
+release artifacts or temporary scripts were retained.
