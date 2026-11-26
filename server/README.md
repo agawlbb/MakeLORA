@@ -541,3 +541,27 @@ Validation without provider traffic:
 php -n server/tests/generation_video.php
 python3 -B -m unittest discover -s server/tests -p test_datasets.py
 ```
+
+### Database connection containment (November 26, 2026)
+
+The shared MariaDB server has `max_connections=25`; its maximum-connection
+rejection counter was 61 during investigation. MakeLORA media requests previously
+kept the bootstrap PDO connection open while transferring output videos/images,
+LoRA weights and FileBeans originals/uploads. Source fix `76bac71` releases the
+connection after authentication/metadata lookup and before transfer or FileBeans
+operations; active SQL transactions cannot be released. No app build is needed.
+
+The production `makelora`@`%` account is now capped at **8** connections via
+`ALTER USER ... WITH MAX_USER_CONNECTIONS 8`, limiting its share of the shared
+connection pool without raising global limits or terminating other applications.
+The code patch is tested and pushed but deployment is pending: automatic approval
+review rejected the incident deployment as requiring explicit approval beyond
+the earlier feature release. The cap is already active. The next health sample
+showed 10 total connections and no increase in the rejection counter (61).
+
+Focused checks passed: actual in-memory SQLite PDO destruction/idempotence and
+transaction preservation (`php server/tests/database_connection.php`), three
+media HTTP tests (connection absent before response bytes), 16 FileBeans dataset
+tests, and headless generation retry regressions. The lifecycle test requires
+PDO SQLite and never uses production database credentials. No deployment bundle
+or media artifacts were created.
