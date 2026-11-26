@@ -19,6 +19,7 @@ function saveGenerationRecipe(string $id,array $input,array $file): void {
         'seed'=>$args['seed'] ?? null,'outputFormat'=>$family!=='qwen' ? 'mp4':'jpg','disableSafetyChecker'=>$args['disable_safety_checker'] ?? false,'retryOffline'=>$input['retry_offline'] ?? false];
     if ($family==='wan') $settings+=['negativePrompt'=>$args['negative_prompt'],'fastMode'=>$args['fast_mode'],'guidanceScale'=>$args['sample_guide_scale'],'inferenceSteps'=>$args['sample_steps'],'flowShift'=>$args['sample_shift'],'providerVersion'=>wanContract()['version']];
     if ($family==='wan_replace') $settings += ['resolution'=>$args['resolution'],'mergeAudio'=>$args['merge_audio'],'goFast'=>$args['go_fast']];
+    if (isset($args['video_edit'])) $settings['videoEdit']=$args['video_edit'];
     $image=$family==='wan_replace' ? $args['character_image']:($family==='wan' ? $args['image']:$args['image'][0]);
     $bytes=base64_decode(substr($image,strlen('data:image/jpeg;base64,')),true);
     if ($bytes===false || strlen($bytes)>11000000) fail('Invalid original image.',413);

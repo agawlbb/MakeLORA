@@ -66,7 +66,19 @@ playback, sharing, removal, saved settings and **Run again**. Playback and shari
 use protected temporary files that are removed afterward; gallery images remain
 in memory. See the server README for the required migration and `ffprobe` setup.
 
-Generation also offers **Wan 2.2 Animate Replace** (`wan-video/wan-2.2-animate-replace`). Select a character image from Photos or Files and an MP4/MOV video from Files (up to 8 MB; combined encoded request up to 16 MB). Choose 480p or 720p, keep or omit the input audio, and optionally enable faster generation. No prompt or custom LoRA is required. Automatic retries privately retain both inputs until acceptance or the existing retry expiry/cleanup. Run again restores the character image and settings; select the video again. This feature requires the updated server and iOS app.
+Generation also offers **Wan 2.2 Animate Replace** (`wan-video/wan-2.2-animate-replace`).
+Choose a video already on FileBeans and use the shared **Trim / Crop** editor to
+select one clip between 0.1 and 60 seconds. Choose the character image from Photos
+or Files, 480p/720p output, audio retention and faster generation. No prompt or
+custom LoRA is required. MakeLORA saves the source path/revision and edit command;
+it does not retain a source video or edited-video copy. At generation time it
+prepares a bounded temporary MP4, uploads the completed file to Replicate Files,
+then deletes the temporary MP4. Replicate receives its own hosted file URL.
+Automatic retries regenerate that clip from the same source revision; changed,
+missing or locked originals are reported. **Run again** restores the character
+image, source reference, trim, crop and settings. Older results without a saved
+video reference require selecting a FileBeans video. The updated server and iOS
+app are required.
 
 ## FileBeans datasets
 

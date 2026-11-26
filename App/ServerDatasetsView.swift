@@ -344,6 +344,7 @@ struct FileBeansBrowser: View {
     @ObservedObject var store: ServerDatasetStore
     let foldersOnly: Bool
     var single = false
+    var mediaPrefix: String? = nil
     var initial: FileBeansLocation?
     let selected: ([FileBeansLocation]) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -360,7 +361,7 @@ struct FileBeansBrowser: View {
                     Button("Sources", systemImage: "externaldrive") { self.location = nil }
                     Text(location.source + " / " + location.path).font(.caption)
                     if location.path != "/" { Button("Parent folder", systemImage: "chevron.up") { self.location = FileBeansLocation(source: location.source, path: (location.path as NSString).deletingLastPathComponent) } }
-                    ForEach(entries.filter { $0.isFolder || !foldersOnly && $0.type.hasPrefix(store.project?.model == "wan" ? "video/" : "image/") }) { entry in
+                    ForEach(entries.filter { $0.isFolder || !foldersOnly && $0.type.hasPrefix(mediaPrefix ?? (store.project?.model == "wan" ? "video/" : "image/")) }) { entry in
                         let item = FileBeansLocation(source: location.source, path: entry.path)
                         Button {
                             if entry.isFolder { self.location = item }

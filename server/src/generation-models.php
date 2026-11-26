@@ -57,9 +57,11 @@ function wanReplaceSettings(array $input): array {
     $image=$input['character_image'] ?? $input['image'] ?? null;
     $video=$input['video'] ?? null;
     if (!is_string($image) || strlen($image)>14666700 || !preg_match('#^data:image/jpeg;base64,[A-Za-z0-9+/=]+$#D',$image)) fail('Choose a character image.');
-    if (!is_string($video) || strlen($video)>10666700 || !preg_match('#^data:video/(mp4|quicktime);base64,[A-Za-z0-9+/=]+$#D',$video)) fail('Choose an MP4 or MOV video up to 8 MB.');
-    foreach ([$image,$video] as $data) if (base64_decode(substr($data,strpos($data,',')+1),true)===false) fail('Invalid file encoding.');
+    if (isset($input['video_edit'])) $edit=generationVideoEdit($input['video_edit']);
+    if (!isset($edit) && (!is_string($video) || strlen($video)>10666700 || !preg_match('#^data:video/(mp4|quicktime);base64,[A-Za-z0-9+/=]+$#D',$video))) fail('Choose an MP4 or MOV video up to 8 MB.');
+    foreach (isset($edit) ? [$image]:[$image,$video] as $data) if (base64_decode(substr($data,strpos($data,',')+1),true)===false) fail('Invalid file encoding.');
     $args=['character_image'=>$image,'video'=>$video,'resolution'=>$input['resolution'] ?? '720','merge_audio'=>$input['merge_audio'] ?? true,'go_fast'=>$input['go_fast'] ?? true];
+    if (isset($edit)) { unset($args['video']);$args['video_edit']=$edit; }
     if (!in_array($args['resolution'],['480','720'],true) || !is_bool($args['merge_audio']) || !is_bool($args['go_fast'])) fail('Invalid replacement settings.');
     if (array_key_exists('seed',$input)) {
         if (!is_int($input['seed']) || $input['seed']<0 || $input['seed']>2147483647) fail('Invalid seed.');
@@ -82,6 +84,10 @@ function generationArguments(array $input,array $file,?array $job=null): array {
     $args=generationSettings($input,$family);
     if ($family==='wan_replace') {
         if (empty($file['is_base'])) fail('Animate Replace does not accept custom LoRA weights.');
+        if (isset($args['video_edit'])) {
+            $args['video']=generationVideoArgument($args['video_edit'],$job['device_id'] ?? $input['_device_id'] ?? '');
+            unset($args['video_edit']);
+        }
         return $args;
     }
     if (empty($file['is_base'])) {

@@ -5,6 +5,7 @@ require_once __DIR__.'/retry-queue.php';
 require_once __DIR__.'/generation-recipes.php';
 require_once __DIR__.'/generation-models.php';
 require_once __DIR__.'/video-output.php';
+require_once __DIR__.'/generation-video.php';
 function qwenGenerationSettings(array $input): array {
     $prompt=$input['prompt'] ?? ''; $image=$input['image'] ?? ''; $ratio=$input['aspect_ratio'] ?? 'match_input_image'; $scale=$input['lora_scale'] ?? 1;
     if (!is_string($prompt) || trim($prompt)==='' || strlen($prompt)>10000 || !is_string($image) || !preg_match('#^data:image/jpeg;base64,[A-Za-z0-9+/=]+$#D',$image) || !in_array($ratio,['match_input_image','1:1','16:9','9:16','4:3','3:4'],true) || !is_numeric($scale) || $scale<0 || $scale>4) fail('Invalid generation settings.');
@@ -220,6 +221,7 @@ function generationWebhook(?array $payload=null): never {
 function startGeneration(array $input, array $device): array {
     global $config,$db;
     $input=resolveGenerationSource($input);
+    $input['_device_id']=$device['id'];
     if (($input['model'] ?? '')===WAN_REPLACE_ID) $input['prompt']='Replace character in video';
     if (isset($input['retry_offline']) && !is_bool($input['retry_offline'])) fail('Invalid retry option.');
     if ($input['retry_offline'] ?? false) return startRetryGeneration($input,$device);
@@ -315,6 +317,11 @@ function removeOutput(string $id): void {
 function generationAPI(string $action, array $device): void {
     if ($device['status']!=='active') fail('Approve pairing on the server first.',403);
     $method=$_SERVER['REQUEST_METHOD'];
+    if ($action==='generation_video_source' && $method==='POST') {
+        try { jsonResponse(generationVideoSource(datasetBody(),$device)); }
+        catch (FileBeansFailure $error) { fail($error->getMessage(),$error->status); }
+        catch (InvalidArgumentException $error) { fail($error->getMessage()); }
+    }
     if ($action==='models' && $method==='GET') {
         $files=query('SELECT sha256 AS id,display_name AS displayName,target_model AS baseModel,size_bytes AS sizeBytes,inspection_json FROM makelora_files ORDER BY display_name,sha256')->fetchAll();
         foreach ($files as &$file) {

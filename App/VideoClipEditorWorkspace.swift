@@ -11,6 +11,7 @@ struct VideoClipEditorWorkspace: View {
     let sourceHeight: Int
     var activity: (() async throws -> Void)? = nil
     var forceSave = false
+    var singleClip = false
     let refresh: (() async throws -> VideoEditorMedia)?
     let saveEdits: ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult
     @Environment(\.dismiss) private var dismiss
@@ -28,8 +29,8 @@ struct VideoClipEditorWorkspace: View {
     @State private var playbackError: String?
     @State private var confirmLeave = false
     @State private var confirmDelete = false
-    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, fixedLength: Double? = nil, newClipAt: Double? = nil, newClipCaption: String = "", refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
-        self.forceSave = forceSave; self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
+    init(name: String, duration: Double, width: Int, height: Int, media: VideoEditorMedia, clips: [VideoEditingClip], selectedID: String?, singleClip: Bool = false, fixedLength: Double? = nil, newClipAt: Double? = nil, newClipCaption: String = "", refresh: (() async throws -> VideoEditorMedia)? = nil, activity: (() async throws -> Void)? = nil, forceSave: Bool = false, save: @escaping ([VideoEditingClip], [VideoEditingClip]) async throws -> VideoEditSaveResult) {
+        self.singleClip = singleClip; self.forceSave = forceSave; self.activity = activity; self.name = name; self.duration = duration; sourceWidth = width; sourceHeight = height; self.refresh = refresh; saveEdits = save
         var initial = VideoEditingSession(duration: duration, clips: clips, selectedID: selectedID, fixedLength: fixedLength)
         if let time = newClipAt { initial.add(at: time); initial.edit { $0.caption = newClipCaption } }
         else if initial.clips.isEmpty { initial.add(at: 0) }
@@ -64,7 +65,7 @@ struct VideoClipEditorWorkspace: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { leave() }.disabled(saving) }
-                ToolbarItem(placement: .confirmationAction) { Button(saving ? "Saving…" : "Save all") { save() }.disabled(saving || (!session.hasChanges && !forceSave)) }
+                ToolbarItem(placement: .confirmationAction) { Button(saving ? "Saving…" : (singleClip ? "Use clip" : "Save all")) { save(close: singleClip) }.disabled(saving || (!session.hasChanges && !forceSave)) }
                 ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Hide keyboard") { hideKeyboard() } }
             }
             .disabled(saving)
@@ -133,10 +134,10 @@ struct VideoClipEditorWorkspace: View {
             HStack {
                 Text(selectedTitle).font(.headline)
                 Spacer()
-                Button("Add clip", systemImage: "plus") { addClip() }.font(.subheadline)
+                if !singleClip { Button("Add clip", systemImage: "plus") { addClip() }.font(.subheadline) }
             }.padding(.horizontal).padding(.top, 12).padding(.bottom, 8)
             if let error { Text(error).foregroundStyle(.red).font(.caption).padding(.horizontal).padding(.bottom, 8) }
-            Picker("Video editor controls", selection: $tab) { ForEach(VideoEditorTab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 8)
+            Picker("Video editor controls", selection: $tab) { ForEach(singleClip ? [.trim, .crop] : VideoEditorTab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 8)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let notice { Text(notice).foregroundStyle(.secondary).font(.callout) }
@@ -167,8 +168,9 @@ struct VideoClipEditorWorkspace: View {
             }
             Text(String(format: "Clip length: %.3f seconds", clip.end-clip.start)).monospacedDigit()
             Slider(value: positionBinding, in: (previewCrop ? (selected?.start ?? 0) : 0)...(previewCrop ? (selected?.end ?? duration) : duration), onEditingChanged: { editing in if !editing { playback.finishScrubbing() } }).accessibilityLabel("Source video playhead")
-            Button("Save and add another clip", systemImage: "plus.rectangle.on.rectangle") { save(addAnother: true) }.buttonStyle(.borderedProminent)
-            Text("Saves every draft clip. The next short selection starts at this clip’s end. Overlapping clips are also allowed.").font(.caption).foregroundStyle(.secondary)
+            if singleClip { Text("Choose a trim between 0.1 and 60 seconds. The original stays on FileBeans.").font(.caption).foregroundStyle(.secondary) }
+            else { Button("Save and add another clip", systemImage: "plus.rectangle.on.rectangle") { save(addAnother: true) }.buttonStyle(.borderedProminent) }
+            if !singleClip { Text("Saves every draft clip. The next short selection starts at this clip’s end. Overlapping clips are also allowed.").font(.caption).foregroundStyle(.secondary) }
         }
     }
     private var cropControls: some View {

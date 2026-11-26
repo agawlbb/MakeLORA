@@ -111,10 +111,19 @@ class DatasetTests(unittest.TestCase):
         function jsonResponse(array $v,int $c=200): never {http_response_code($c);header('Content-Type: application/json');echo json_encode($v);exit;}
         function query(string $s,array $p=[]): object {return new class {function fetch(){return ['id'=>str_repeat('d',32),'status'=>'active'];}};}
         require %s;
+        require_once dirname(%s).'/generation-video.php';
+        if ($_GET['action']==='generation_video_media') {
+            try { serveGenerationVideo(); } catch (FileBeansFailure $e) { fail($e->getMessage(),$e->status); }
+        }
         if ($_GET['action']==='dataset_media') serveDatasetMedia();
         if (($_SERVER['HTTP_AUTHORIZATION'] ?? '')!=='Bearer '.str_repeat('b',64)) fail('Unauthorized',401);
+        if ($_GET['action']==='generation_video_source') {
+            try { jsonResponse(generationVideoSource(datasetBody(),['id'=>str_repeat('d',32)])); }
+            catch (FileBeansFailure $e) { fail($e->getMessage(),$e->status); }
+            catch (InvalidArgumentException $e) { fail($e->getMessage()); }
+        }
         datasetsAPI($_GET['action'],['id'=>str_repeat('d',32),'status'=>'active']);
-        ''' % (json.dumps(str(cls.private)), json.dumps(cls.base), json.dumps(str(ROOT / 'src/datasets.php'))))
+        ''' % (json.dumps(str(cls.private)), json.dumps(cls.base), json.dumps(str(ROOT / 'src/datasets.php')), json.dumps(str(ROOT / 'src/datasets.php'))))
         cls.php = subprocess.Popen(['php', '-d', 'output_buffering=1048576', '-d', f'curl.cainfo={cert}', '-S', f'127.0.0.1:{port}', str(router)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -123,6 +132,30 @@ class DatasetTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.php.terminate(); cls.php.wait(timeout=5); cls.fb.shutdown(); cls.fb.server_close(); cls.temp.cleanup()
+    def test_generation_video_source_is_reference_only(self):
+        existing = {str(p): p.read_bytes() for p in (self.private / 'datasets').rglob('*') if p.is_file()}
+        status, source = self.api('generation_video_source', {'source': 'fixture', 'path': '/original.mp4'})
+        self.assertEqual(status, 200)
+        self.assertEqual(source['revision'], self.state['revision'])
+        self.assertEqual(source['duration'], 10)
+        self.assertEqual(existing, {str(p): p.read_bytes() for p in (self.private / 'datasets').rglob('*') if p.is_file()})
+        self.assertFalse((self.private / 'generation-video-scratch').exists())
+        with urllib.request.urlopen(source['previewURL']) as reply:
+            self.assertEqual(reply.read(), ORIGINAL)
+        altered = source['previewURL'] + 'x'
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(altered)
+        self.assertEqual(error.exception.code, 403)
+        self.state['revision'] = 'c' * 64
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(source['previewURL'])
+        self.assertEqual(error.exception.code, 409)
+        status, _ = self.api('generation_video_source', {'source': 'fixture', 'path': '/original.mp4', 'revision': source['revision']})
+        self.assertEqual(status, 409)
+        self.state['locked'] = True
+        status, _ = self.api('generation_video_source', {'source': 'fixture', 'path': '/original.mp4'})
+        self.assertEqual(status, 423)
+
     def setUp(self): self.state['locked'] = False; self.state['revision'] = 'a' * 64
     def api(self, action, body=None, id=None, **query):
         if id: query['id'] = id

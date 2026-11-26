@@ -40,6 +40,7 @@ struct GenerationSettings: Decodable {
     var inferenceSteps: Int? = nil
     var flowShift: Int? = nil
     var providerVersion: String? = nil
+    var videoEdit: GenerationVideoEdit? = nil
     var resolution: String? = nil
     var mergeAudio: Bool? = nil
     var goFast: Bool? = nil
@@ -282,7 +283,7 @@ struct WanGenerationOptions {
         parts.queryItems = [URLQueryItem(name: "action", value: action)]
         if let id { parts.queryItems?.append(URLQueryItem(name: "id", value: id)) }
         if let before { parts.queryItems?.append(URLQueryItem(name: "before", value: before)) }
-        var request = URLRequest(url: parts.url!, cachePolicy: .reloadIgnoringLocalCacheData); request.timeoutInterval = 90
+        var request = URLRequest(url: parts.url!, cachePolicy: .reloadIgnoringLocalCacheData); request.timeoutInterval = action == "generate" ? 600 : 90
         request.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -309,7 +310,13 @@ struct WanGenerationOptions {
             await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
-    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil, wan: WanGenerationOptions = WanGenerationOptions(), video: Data? = nil, videoMIME: String = "video/mp4", resolution: String = "720", mergeAudio: Bool = true, goFast: Bool = true) async -> GenerationSubmissionOutcome {
+    func videoSource(_ location: FileBeansLocation, revision: String? = nil) async throws -> GenerationVideoSource {
+        guard let credential = activeCredential else { throw URLError(.userAuthenticationRequired) }
+        var body: [String: Any] = ["source": location.source, "path": location.path]
+        if let revision { body["revision"] = revision }
+        return try JSONDecoder().decode(GenerationVideoSource.self, from: await request("generation_video_source", credential: credential, body: body))
+    }
+    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil, wan: WanGenerationOptions = WanGenerationOptions(), videoEdit: GenerationVideoEdit? = nil, resolution: String = "720", mergeAudio: Bool = true, goFast: Bool = true) async -> GenerationSubmissionOutcome {
         guard !busy else { return .failed }
         activeCredential = credential
         busy = true; error = nil
@@ -318,8 +325,8 @@ struct WanGenerationOptions {
         do {
             var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale, "retry_offline": retryOffline]
             if model.isCharacterReplacement {
-                guard let video, video.count <= 8_000_000 else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Choose an MP4 or MOV video up to 8 MB."]) }
-                body = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "video": "data:" + videoMIME + ";base64," + video.base64EncodedString(), "resolution": resolution, "merge_audio": mergeAudio, "go_fast": goFast, "retry_offline": retryOffline]
+                guard let videoEdit else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Choose a FileBeans video and save its trim and crop."]) }
+                body = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "video_edit": try videoEdit.body, "resolution": resolution, "merge_audio": mergeAudio, "go_fast": goFast, "retry_offline": retryOffline]
             } else if model.isVideo {
                 body["negative_prompt"] = wan.negativePrompt; body["fast_mode"] = wan.fastMode
                 body["sample_guide_scale"] = wan.guidance; body["sample_steps"] = wan.steps; body["sample_shift"] = wan.shift

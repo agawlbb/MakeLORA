@@ -52,7 +52,7 @@ function retrySavePayload(string $id,array $input): string {
     $args=generationSettings($input);
     // Persist only validated original inputs, never provider credentials or expiring URLs.
     $payload=$args;
-    $payload['model']=$input['model'];$payload['_family']=$input['_family'] ?? 'qwen';
+    $payload['model']=$input['model'];$payload['_device_id']=$input['_device_id'] ?? '';$payload['_family']=$input['_family'] ?? 'qwen';
     if (isset($payload['image']) && is_array($payload['image'])) $payload['image']=$payload['image'][0];
     unset($payload['lora_weights']);
     if (isset($args['seed'])) $payload['seed']=$args['seed'];
@@ -137,7 +137,19 @@ function submitRetryAttempt(array $job): void {
     elseif (($input['model'] ?? '')===WAN_BASE_ID) $file=baseWanModel();
     else $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model']])->fetch();
     if (!$file || generationFamily($file['target_model'])!==($job['model_family'] ?? 'qwen')) { retryFinish($job,'failed','The selected weight is unavailable or its base model changed. Choose a weight and submit again.'); return; }
-    $args=generationArguments($input,$file,$job);
+    try { $args=generationArguments($input,$file,$job); }
+    catch (InvalidArgumentException $error) { retryFinish($job,'failed',$error->getMessage());return; }
+    catch (FileBeansFailure $error) {
+        if (in_array($error->reason,['source_changed','missing'],true)) retryFinish($job,'failed',$error->getMessage());
+        else retrySchedule($job,$error->getMessage());
+        return;
+    }
+    catch (ProviderFailure $error) {
+        if (retryableSubmissionFailure($error)) retrySchedule($job,$error->getMessage());
+        else retryFinish($job,'failed',$error->getMessage());
+        return;
+    }
+    catch (RuntimeException $error) { retrySchedule($job,$error->getMessage());return; }
     $base=rtrim($config['base_url'],'/').'/api.php?';
     $previous=latestRetryAttempt($job['id']);
     $number=$previous ? (int)$previous['attempt_no']+1 : 0;

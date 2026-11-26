@@ -501,3 +501,43 @@ chunk instead of accumulating PHP output, disables proxy buffering where
 supported, and stops its upstream transfer when it detects a disconnected player.
 The dataset API suite verifies an initial partial-range chunk is delivered while
 the upstream response is still waiting, even with PHP output buffering enabled.
+
+### Animate Replace video editing
+
+The iOS generation composer reuses the FileBeans browser and shared video editor
+in a single-clip Trim/Crop mode. `generation_video_source` reads metadata and
+returns a device-bound, signed, expiring preview link to the revision-pinned
+FileBeans original. Selecting/editing creates no media or FileBeans render job.
+`video_edit` carries `source`, `path`, `revision`, optional `vault`, `start`, `end`
+and normalized `crop`; recipes/retry payloads save that command, never source
+video bytes or expiring preview/provider URLs. Legacy encoded video requests
+remain supported for old clients.
+
+Generation validates the source revision and duration, then uses FFmpeg to create
+a complete MP4 in `<private_session_directory>/generation-video-scratch/.clip-*`.
+One preparation/upload runs at a time under a lock. Clips are 0.1–60 seconds;
+FFmpeg is capped at two threads, 2 GiB address space, 300 CPU/wall seconds and
+100 MB file size, with an earlier encoding size cutoff. The completed MP4 is
+validated and uploaded as multipart `content` to Replicate `POST /v1/files`; its
+returned `urls.get` is the prediction `video` input. The temporary clip is removed
+in `finally` and on PHP shutdown, including upload/render failures. An interrupted
+worker’s orphan is removed under the exclusive lock before the next preparation.
+[Replicate Files uploads expire after 24 hours](https://github.com/replicate/replicate-javascript#files).
+
+Deployment requires `ffmpeg` (optional private setting `ffmpeg_binary`), `ffprobe`,
+`/usr/bin/timeout`, `/usr/bin/prlimit`, PHP `proc_open`, and a disk-backed private
+session volume with at least 250 MB free for bounded scratch/MP4 finalization.
+The HTTP/PHP worker pool must allow concurrent requests: FFmpeg reads a signed
+original-media URL served by another worker. The API request can take up to
+600 seconds while preparing/uploading; configure proxy/PHP request limits
+accordingly. FileBeans receives no rendered copy and its source remains unchanged.
+Source changes fail the job for review; locked/unavailable sources and transient
+upload/preparation failures can follow the existing retry schedule. No paid
+prediction is issued until preparation and upload succeed.
+
+Validation without provider traffic:
+
+```sh
+php -n server/tests/generation_video.php
+python3 -B -m unittest discover -s server/tests -p test_datasets.py
+```

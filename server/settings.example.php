@@ -17,6 +17,9 @@ return [
  'filebeans_url'=>'https://files.example/companion',
  'filebeans_token'=>'',
  'filebeans_sources'=>['VPS'],
+ // Generation trims/crops use ffmpeg, timeout and prlimit. The private-session
+ // volume must be disk-backed; edited scratch is capped at 100 MB and removed after upload.
+ 'ffmpeg_binary'=>'/usr/bin/ffmpeg',
  'ffprobe_binary'=>'/usr/bin/ffprobe',
  'private_session_directory'=>'/var/lib/makelora/private-sessions',
 ];

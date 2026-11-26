@@ -173,6 +173,8 @@ struct GenerationComposer: View {
         _scale = State(initialValue: settings.loraScale ?? 1)
         _seed = State(initialValue: settings.seed.map(String.init) ?? "")
         _retryOffline = State(initialValue: settings.retryOffline ?? true)
+        _videoEdit = State(initialValue: settings.videoEdit)
+        _videoEdit = State(initialValue: settings.videoEdit)
         _resolution = State(initialValue: settings.resolution ?? "720")
         _mergeAudio = State(initialValue: settings.mergeAudio ?? true)
         _goFast = State(initialValue: settings.goFast ?? true)
@@ -194,9 +196,10 @@ struct GenerationComposer: View {
     @State private var seed = ""
     @State private var retryOffline = true
     @State private var videoFiles = false
-    @State private var video: Data?
-    @State private var videoName = ""
-    @State private var videoMIME = "video/mp4"
+    @State private var videoEdit: GenerationVideoEdit?
+    @State private var editingVideo: GenerationVideoSource?
+    @State private var loadingVideo = false
+    @StateObject private var videoLibrary = ServerDatasetStore()
     @State private var resolution = "720"
     @State private var mergeAudio = true
     @State private var goFast = true
@@ -232,9 +235,14 @@ struct GenerationComposer: View {
                 if useModel {
                     if model?.isCharacterReplacement == true {
                         Section("Input video") {
-                            Button("Choose video from Files") { videoFiles = true }.disabled(importing || store.busy)
-                            if video != nil { Text(videoName).font(.caption) }
-                            Text("Choose an MP4 or MOV up to 8 MB containing the character to replace. Choose the video again when running a previous result.").font(.caption).foregroundStyle(.secondary)
+                            Button("Choose video from FileBeans") { videoLibrary.configure(pairing.credential); videoFiles = true }.disabled(importing || store.busy || loadingVideo)
+                            if let videoEdit {
+                                Text(videoEdit.source + " / " + videoEdit.path).font(.caption)
+                                Text(String(format: "%.2f–%.2f seconds", videoEdit.start, videoEdit.end)).font(.caption)
+                                Button("Trim and crop") { openVideo(videoEdit.location, revision: videoEdit.revision) }.disabled(loadingVideo || store.busy)
+                            }
+                            if loadingVideo { ProgressView("Opening source…") }
+                            Text("Trim and crop one clip up to 60 seconds. The source stays on FileBeans; MakeLORA saves its reference and edit instructions.").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     Section(model?.isCharacterReplacement == true ? "Character image" : "Input image") {
@@ -288,7 +296,7 @@ struct GenerationComposer: View {
                     Button(model?.isVideo == true ? "Generate video" : "Generate image", systemImage: "sparkles") {
                         guard let credential = pairing.credential, let image, let model, model.supported else { return }
                         Task {
-                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID, wan: wan, video: video, videoMIME: videoMIME, resolution: resolution, mergeAudio: mergeAudio, goFast: goFast)
+                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID, wan: wan, videoEdit: videoEdit, resolution: resolution, mergeAudio: mergeAudio, goFast: goFast)
                             switch result {
                             case .submitted: dismiss()
                             case .sourceUnavailable:
@@ -299,7 +307,7 @@ struct GenerationComposer: View {
                                 importError = store.error; store.error = nil
                             }
                         }
-                    }.disabled(image == nil || importing || (model?.isCharacterReplacement == true ? video == nil : prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || store.busy || pairing.credential == nil || model?.supported != true)
+                    }.disabled(image == nil || importing || (model?.isCharacterReplacement == true ? videoEdit == nil || loadingVideo : prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || store.busy || pairing.credential == nil || model?.supported != true)
                 }
             }
             .navigationTitle(useModel ? (model?.isVideo == true ? "Generate video" : "Generate image") : "Model details")
@@ -325,18 +333,15 @@ struct GenerationComposer: View {
                 } catch { image = nil; importError = error.localizedDescription }
             }
         }
-        .fileImporter(isPresented: $videoFiles, allowedContentTypes: [.mpeg4Movie, .quickTimeMovie]) { result in
-            do {
-                let url = try result.get(); let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                guard size > 0, size <= 8_000_000 else { throw ProjectError.invalid("Choose a video up to 8 MB.") }
-                let bytes = try Data(contentsOf: url)
-                guard bytes.count <= 8_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
-                video = bytes; videoName = url.lastPathComponent
-                videoMIME = url.pathExtension.lowercased() == "mov" ? "video/quicktime" : "video/mp4"
-                importError = nil
-            } catch { video = nil; importError = error.localizedDescription }
+        .sheet(isPresented: $videoFiles) {
+            FileBeansBrowser(store: videoLibrary, foldersOnly: false, single: true, mediaPrefix: "video/") { locations in
+                if let location = locations.first { openVideo(location) }
+            }
+        }
+        .sheet(item: $editingVideo) { source in
+            GenerationInputVideoEditor(source: source, initial: videoEdit,
+                refresh: { try await store.videoSource(FileBeansLocation(source: source.source, path: source.path), revision: source.revision) },
+                saved: { videoEdit = $0 })
         }
         .fileImporter(isPresented: $files, allowedContentTypes: [.image]) { result in
             do {
@@ -344,6 +349,14 @@ struct GenerationComposer: View {
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 try prepare(Data(contentsOf: url))
             } catch { image = nil; importError = error.localizedDescription }
+        }
+    }
+    private func openVideo(_ location: FileBeansLocation, revision: String? = nil) {
+        loadingVideo = true; importError = nil
+        Task {
+            defer { loadingVideo = false }
+            do { editingVideo = try await store.videoSource(location, revision: revision) }
+            catch { importError = error.localizedDescription }
         }
     }
     private func prepare(_ data: Data) throws {
@@ -498,7 +511,7 @@ private struct GenerationSettingsView: View {
                         LabeledContent("Resolution", value: resolution + "p")
                         LabeledContent("Keep input audio", value: settings.mergeAudio == true ? "On" : "Off")
                         LabeledContent("Faster generation", value: settings.goFast == true ? "On" : "Off")
-                        Text("Select the input video again when running this result.").font(.caption).foregroundStyle(.secondary)
+                        Text(settings.videoEdit == nil ? "Select the input video again when running this result." : "Run again restores the FileBeans video reference and saved trim/crop.").font(.caption).foregroundStyle(.secondary)
                     }
                     if let mode = settings.fastMode {
                         Section("Video settings") {

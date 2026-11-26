@@ -6,6 +6,7 @@ try {
     $action = $_GET['action'] ?? '';
     require_once dirname(__DIR__).'/src/generation.php';
     require_once dirname(__DIR__).'/src/datasets.php';
+    if ($action==='generation_video_media' && in_array($_SERVER['REQUEST_METHOD'],['GET','HEAD'],true)) serveGenerationVideo();
     if ($action==='dataset_media' && in_array($_SERVER['REQUEST_METHOD'],['GET','HEAD'],true)) serveDatasetMedia();
     if ($action==='generation_webhook' && $_SERVER['REQUEST_METHOD']==='POST') generationWebhook();
     if ($action==='weights' && in_array($_SERVER['REQUEST_METHOD'],['GET','HEAD'],true)) serveWeights();
@@ -38,8 +39,10 @@ try {
         query("UPDATE makelora_devices SET status='revoked' WHERE id=?",[$row['id']]); jsonResponse(['status'=>'revoked']);
     }
     if (str_starts_with($action,'dataset')) datasetsAPI($action,$row);
-    if (in_array($action,['models','generate','prediction','gallery','output','remove_output','dismiss_generation','cancel_retries','generation_details','generation_input'],true)) generationAPI($action,$row);
+    if (in_array($action,['generation_video_source','models','generate','prediction','gallery','output','remove_output','dismiss_generation','cancel_retries','generation_details','generation_input'],true)) generationAPI($action,$row);
     fail('Unknown operation or method.',405);
-} catch (ProviderFailure $e) { $e->respond(); }
+} catch (FileBeansFailure $e) { fail($e->getMessage(),$e->status); }
+catch (InvalidArgumentException $e) { fail($e->getMessage()); }
+catch (ProviderFailure $e) { $e->respond(); }
 catch (JsonException|TypeError $e) { fail('Invalid request.'); }
 catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); error_log('MakeLORA pairing failure: '.get_class($e)); fail('Pairing service unavailable.',503); }
