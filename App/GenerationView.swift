@@ -3,6 +3,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import ImageIO
 import AVKit
+import MakeLORACore
 
 struct GenerationView: View {
     @EnvironmentObject private var store: GenerationStore
