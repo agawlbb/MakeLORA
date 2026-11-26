@@ -25,6 +25,7 @@ try {
     error_log('MakeLORA database unavailable: '.get_class($e));
     http_response_code(503); header('Cache-Control: no-store'); exit('Pairing database unavailable.');
 }
+require_once __DIR__.'/database-connection.php';
 header('Cache-Control: no-store');
 header('Referrer-Policy: no-referrer');
 header('X-Content-Type-Options: nosniff');

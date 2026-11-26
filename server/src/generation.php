@@ -68,6 +68,7 @@ function serveWeights(): never {
     if (!$file) fail('Weight unavailable.',404);
     $path=($config['file_storage_directory'] ?? dirname(__DIR__).'/storage/files').'/'.basename($file['storage_key']);
     if (!is_file($path)) fail('Weight unavailable.',404);
+    releaseDatabaseConnection();
     header('Content-Disposition: attachment; filename="weights.safetensors"');
     header('Content-Type: application/octet-stream'); header('Content-Length: '.filesize($path));
     if ($_SERVER['REQUEST_METHOD']!=='HEAD') readfile($path);
@@ -285,6 +286,7 @@ function outputRecord(string $id): array {
 }
 function serveOutput(string $id): never {
     $row=outputRecord($id);
+    releaseDatabaseConnection();
     $path=outputDirectory().'/'.basename($row['storage_key']);
     if (!is_file($path)) fail('Media unavailable.',404);
     $size=filesize($path); $range=outputByteRange($_SERVER['HTTP_RANGE'] ?? null,$size);
@@ -318,6 +320,7 @@ function generationAPI(string $action, array $device): void {
     if ($device['status']!=='active') fail('Approve pairing on the server first.',403);
     $method=$_SERVER['REQUEST_METHOD'];
     if ($action==='generation_video_source' && $method==='POST') {
+        releaseDatabaseConnection();
         try { jsonResponse(generationVideoSource(datasetBody(),$device)); }
         catch (FileBeansFailure $error) { fail($error->getMessage(),$error->status); }
         catch (InvalidArgumentException $error) { fail($error->getMessage()); }

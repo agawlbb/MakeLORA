@@ -107,6 +107,8 @@ class DatasetTests(unittest.TestCase):
         router = cls.root / 'router.php'
         router.write_text('''<?php
         $config=['private_session_directory'=>%s,'base_url'=>%s,'browser_base_url'=>'https://management.fixture.invalid/MakeLORA'];
+        $db=new stdClass();$connection=WeakReference::create($db);
+        header_register_callback(static function() use ($connection): void { header('X-Test-Database-Open: '.($connection->get()===null ? 'no':'yes')); });
         function fail(string $m,int $c=400): never {jsonResponse(['error'=>$m],$c);}
         function jsonResponse(array $v,int $c=200): never {http_response_code($c);header('Content-Type: application/json');echo json_encode($v);exit;}
         function query(string $s,array $p=[]): object {return new class {function fetch(){return ['id'=>str_repeat('d',32),'status'=>'active'];}};}
@@ -141,6 +143,7 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(existing, {str(p): p.read_bytes() for p in (self.private / 'datasets').rglob('*') if p.is_file()})
         self.assertFalse((self.private / 'generation-video-scratch').exists())
         with urllib.request.urlopen(source['previewURL']) as reply:
+            self.assertEqual(reply.headers['X-Test-Database-Open'], 'no')
             self.assertEqual(reply.read(), ORIGINAL)
         altered = source['previewURL'] + 'x'
         with self.assertRaises(urllib.error.HTTPError) as error:

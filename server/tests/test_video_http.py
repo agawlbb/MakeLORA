@@ -24,6 +24,8 @@ class VideoHTTPTests(unittest.TestCase):
         # The router exercises the same active-device gate and delivery function as api.php.
         router = '''<?php
         $config=['private_session_directory'=>%s];
+        $db=new stdClass();$connection=WeakReference::create($db);
+        header_register_callback(static function() use ($connection): void { header('X-Test-Database-Open: '.($connection->get()===null ? 'no':'yes')); });
         function fail(string $message,int $code=400): never { http_response_code($code);header('Content-Type: application/json');echo json_encode(['error'=>$message]);exit; }
         function jsonResponse(array $data,int $code=200): never { http_response_code($code);echo json_encode($data);exit; }
         function query(string $sql,array $params=[]): object {
@@ -79,6 +81,7 @@ class VideoHTTPTests(unittest.TestCase):
         with self.request() as reply:
             self.assertEqual(reply.status, 200)
             self.assertEqual(reply.headers['Content-Type'], 'video/mp4')
+            self.assertEqual(reply.headers['X-Test-Database-Open'], 'no')
             self.assertEqual(reply.headers['Accept-Ranges'], 'bytes')
             self.assertEqual(reply.read(), self.bytes)
         with self.request(method='HEAD') as reply:

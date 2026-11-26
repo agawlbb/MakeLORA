@@ -115,6 +115,7 @@ function datasetInput(array $v): array { return array_intersect_key($v,array_fli
 function datasetsAPI(string $action,array $device): never {
     global $config;
     if ($device['status']!=='active') fail('Approve pairing on the server first.',403);
+    releaseDatabaseConnection();
     try {
         $method=$_SERVER['REQUEST_METHOD'];
         if ($action==='dataset_connection'&&$method==='GET') {

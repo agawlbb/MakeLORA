@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__.'/private-session.php';
+require_once __DIR__.'/database-connection.php';
 final class FileBeansFailure extends RuntimeException {
     public function __construct(public readonly string $reason, string $message, public readonly int $status=503) { parent::__construct($message); }
 }
@@ -59,6 +60,7 @@ function filebeansActivity(array $p): void {
 }
 // Proxy authenticated bytes without buffering an original, upload, or preview.
 function filebeansProxy(string $method,string $route,array $query=[],bool $upload=false): never {
+    releaseDatabaseConnection();
     $headers=[];
     if ($upload) {
         $key=$_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''; $hash=$_SERVER['HTTP_X_CONTENT_SHA256'] ?? '';

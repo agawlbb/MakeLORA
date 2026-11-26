@@ -113,6 +113,7 @@ function serveGenerationVideo(): never {
     if (!is_array($value)||($value["expires"] ?? 0)<time()) fail("Video link expired. Reopen the editor.",403);
     $device=query("SELECT * FROM makelora_devices WHERE id=?",[$value["device"]])->fetch();
     if (!$device||$device["status"]!=="active") fail("Device unavailable.",403);
+    releaseDatabaseConnection();
     $reference=$value["reference"];filebeansLocation($reference);generationVideoCheck($reference);
     filebeansProxy($_SERVER["REQUEST_METHOD"],"datasets/source/content",$reference);
 }

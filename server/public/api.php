@@ -45,4 +45,4 @@ try {
 catch (InvalidArgumentException $e) { fail($e->getMessage()); }
 catch (ProviderFailure $e) { $e->respond(); }
 catch (JsonException|TypeError $e) { fail('Invalid request.'); }
-catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); error_log('MakeLORA pairing failure: '.get_class($e)); fail('Pairing service unavailable.',503); }
+catch (Throwable $e) { if ($db instanceof PDO && $db->inTransaction()) $db->rollBack(); error_log('MakeLORA pairing failure: '.get_class($e)); fail('Pairing service unavailable.',503); }
