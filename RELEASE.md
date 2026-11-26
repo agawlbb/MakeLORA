@@ -153,3 +153,35 @@ No server code changed and no server deployment was performed. Physical-device
 acceptance remains a user check for preview updates while dragging through a
 large video. Workflow cleanup removed temporary signing material; no local
 release artifacts or temporary scripts were retained.
+
+## Animate Replace and FileBeans video editing — TestFlight 18 (November 26, 2026)
+
+Published **0.1.0 (18)** from `5f8db52` on `main`.
+[Release workflow](https://github.com/agawlbb/MakeLORA/actions/runs/45812486035)
+passed iPad simulator tests, core tests, distribution signing, upload, Apple
+processing and existing sole internal tester verification. Apple build
+`b12590a1-7dd3-488e-95b6-f94294c30212` is **VALID / IN_BETA_TESTING**, with
+automatic internal notifications enabled. No testers were added.
+
+Generation includes Wan 2.2 Animate Replace with a character image and a
+FileBeans video. The shared editor offers single-clip trimming and cropping.
+Recipes and retries save a revision-pinned FileBeans reference and edit command;
+the original stays on FileBeans. Generation prepares a bounded temporary MP4,
+uploads the completed file to Replicate Files, passes its hosted URL to the
+prediction, and removes the temporary MP4. Run again restores the saved edits.
+
+Deployed the matching server source with the existing VM-to-VPS transfer
+procedure. Six generation/API source hashes match `5f8db52`; private settings,
+user data and the existing frontend image were preserved. Required schema
+columns were already present, so no migration was needed. Live checks verified
+the replacement model in the catalog, FFmpeg/ffprobe/timeout/prlimit availability,
+FileBeans original-source API connectivity and the active retry timer. Anonymous
+model/source APIs return 401, invalid signed-media access returns 403, and
+management on `joe.coffeybean.com/MakeLORA/` redirects to sign-in (302).
+
+No registered Wan dataset source was available for a live playback/range check;
+physical-device editing and end-to-end generation remain acceptance checks. No
+paid prediction was made for verification. Source-only validation and real
+FFmpeg trim/crop plus mocked upload/cleanup regressions passed before release.
+Runner signing files were removed; no local IPA, deployment bundle, temporary VPS
+source copy or image was created or retained.
