@@ -557,6 +557,12 @@ and released media transfers still use no slot. No database migration is needed.
 remains 8 because a smaller limit has not been shown to preserve peak throughput.
 The MariaDB account cap remains the final backstop for external clients or hosts.
 
+Deployed `5f93847` on November 26, 2026: both runtime hashes matched; live
+PDO acquisition/SQL/release, API 401, signed-media 403, compatibility API 401,
+management sign-in redirect and active retry timer were verified. Capacity,
+lifecycle, media, dataset and fake-provider/retry checks passed. No staging,
+image, database migration or app build was needed.
+
 Verify with `php server/tests/database_connection.php` and
 `python3 -B -m unittest discover -s server/tests -p 'test_database_*.py'`.
 The capacity regression uses eight separate SQLite processes and checks overload
