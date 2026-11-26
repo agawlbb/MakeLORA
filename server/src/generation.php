@@ -148,6 +148,7 @@ function syncGeneration(array $job, bool $force=false, bool $direct=false): arra
 function archiveGenerationPrediction(array $job,array $prediction,int $outputOffset=0,bool $preserveState=false): array {
     global $db;
     $written=[];
+    $db ??= databaseConnection();
     $db->beginTransaction();
     try {
         $job=query('SELECT * FROM makelora_generations WHERE id=? FOR UPDATE',[$job['id']])->fetch();
@@ -235,6 +236,7 @@ function startGeneration(array $input, array $device): array {
     outputDirectory();
     $base=rtrim($config['base_url'],'/').'/api.php?';
     $id=bin2hex(random_bytes(32)); $callback=bin2hex(random_bytes(32));
+    $db ??= databaseConnection();
     $db->beginTransaction();
     try {
         query('INSERT INTO makelora_generations (id,device_id,model_name,prompt,callback_hash,created_at) VALUES (?,?,?,?,?,UTC_TIMESTAMP())',[$id,$device['id'],$file['display_name'],$input['prompt'],hash('sha256',$callback)]);
@@ -305,6 +307,7 @@ function serveOutput(string $id): never {
 function removeOutput(string $id): void {
     global $db;
     $row=outputRecord($id);
+    $db ??= databaseConnection();
     $db->beginTransaction();
     try {
         $job=query('SELECT * FROM makelora_generations WHERE id=? FOR UPDATE',[$row['generation_id']])->fetch();

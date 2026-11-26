@@ -565,3 +565,19 @@ media HTTP tests (connection absent before response bytes), 16 FileBeans dataset
 tests, and headless generation retry regressions. The lifecycle test requires
 PDO SQLite and never uses production database credentials. No deployment bundle
 or media artifacts were created.
+
+The follow-up optimization makes PDO creation lazy: bootstrap opens no SQL
+connection, `query()` creates/reuses a nonpersistent connection on first use, and
+transaction entry points explicitly obtain one when needed. Invalid credentials
+and invalid signed media links therefore consume no SQL slot. Connection attempts
+are bounded by a three-second connect timeout; database errors return a safe 503.
+After a media/dataset handler releases its connection, a later SQL operation can
+reconnect without retaining an idle session. The active-transaction guard remains.
+
+Regression checks also exercise the actual API/bootstrap against an intentionally
+unavailable local database: invalid authentication returns 401, invalid signed
+media returns 403, and only requests that need SQL return 503. Run
+`python3 -B -m unittest discover -s server/tests -p test_database_lifecycle.py` and
+`php server/tests/database_connection.php`. Media, dataset and generation/retry
+regressions pass. These are server-only source changes; deployment remains pending
+explicit incident-rollout approval, and the production account cap remains 8.

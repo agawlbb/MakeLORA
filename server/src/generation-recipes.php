@@ -50,6 +50,7 @@ function generationDetails(string $id): array {
 function originalImageForOutput(string $id): string {
     global $db;
     $output=outputRecord($id);
+    $db ??= databaseConnection();
     $db->beginTransaction();
     try {
         query('SELECT * FROM makelora_generations WHERE id=? FOR UPDATE',[$output['generation_id']])->fetch();
@@ -82,6 +83,7 @@ function purgeUnusedRecipeInputs(): void {
     global $db;
     $rows=query("SELECT r.generation_id FROM makelora_generation_recipes r JOIN makelora_generations g ON g.id=r.generation_id WHERE r.input_key IS NOT NULL AND r.created_at<=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 12 HOUR) AND g.status NOT IN ('starting','processing','retry_submitting','retry_scheduled','retry_paused') AND NOT EXISTS (SELECT 1 FROM makelora_outputs o WHERE o.generation_id=g.id AND o.deleted_at IS NULL)")->fetchAll();
     foreach ($rows as $row) {
+        $db ??= databaseConnection();
         $db->beginTransaction();
         try {
             $job=query('SELECT * FROM makelora_generations WHERE id=? FOR UPDATE',[$row['generation_id']])->fetch();

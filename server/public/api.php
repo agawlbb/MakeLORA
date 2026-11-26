@@ -17,6 +17,7 @@ try {
         $input = json_decode($raw, true, 8, JSON_THROW_ON_ERROR);
         $invite=$input['invitation'] ?? ''; $name=trim($input['name'] ?? '');
         if (!is_string($invite) || !preg_match('/^[a-f0-9]{64}$/D',$invite) || $name==='' || mb_strlen($name)>100) fail('Invalid pairing request.');
+        $db ??= databaseConnection();
         $db->beginTransaction();
         $row=query('SELECT * FROM makelora_invites WHERE id=? FOR UPDATE',[hash('sha256',$invite)])->fetch();
         if (!$row || $row['used_at'] || strtotime($row['expires_at'].' UTC')<=time()) { $db->rollBack(); fail('Invitation expired or already used.',410); }

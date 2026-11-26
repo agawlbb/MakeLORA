@@ -3,12 +3,17 @@ declare(strict_types=1);
 // Real PDO lifecycle and transaction guard, isolated in-memory SQLite only.
 require dirname(__DIR__)."/src/database-connection.php";
 function check(bool $ok,string $message): void { if (!$ok) throw new RuntimeException($message); }
-$db=new PDO("sqlite::memory:");$reference=WeakReference::create($db);
+$config=['dsn'=>'sqlite::memory:','user'=>'','password'=>''];$db=null;
+check($db===null,"No eager connection");
+$created=databaseConnection();check($created===$db,"First SQL request opens shared connection");
+check(databaseConnection()===$created,"Subsequent SQL reuses the connection");unset($created);
+$reference=WeakReference::create($db);
 check($db->query("SELECT 1")->fetchColumn()===1,"Fixture connection usable");
 releaseDatabaseConnection();
 check($db===null&&$reference->get()===null,"Release destroys the actual PDO connection");
 releaseDatabaseConnection();
-$db=new PDO("sqlite::memory:");$db->beginTransaction();
+$reopened=databaseConnection();check($reopened instanceof PDO,"SQL can reconnect after a released media request");unset($reopened);
+$db->beginTransaction();
 $blocked=false;
 try { releaseDatabaseConnection(); }
 catch (LogicException $expected) { $blocked=true; }

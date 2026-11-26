@@ -110,6 +110,7 @@ function startRetryGeneration(array $input,array $device): array {
     outputDirectory();
     $id=bin2hex(random_bytes(32)); $now=time();
     $key=retrySavePayload($id,$input);
+    $db ??= databaseConnection();
     $db->beginTransaction();
     try {
         query("INSERT INTO makelora_generations (id,device_id,model_name,prompt,status,retry_enabled,retry_until,next_retry_at,retry_payload_key,created_at) VALUES (?,?,?,?,'retry_scheduled',1,?,?,?,?)",
