@@ -554,10 +554,12 @@ operations; active SQL transactions cannot be released. No app build is needed.
 The production `makelora`@`%` account is now capped at **8** connections via
 `ALTER USER ... WITH MAX_USER_CONNECTIONS 8`, limiting its share of the shared
 connection pool without raising global limits or terminating other applications.
-The code patch is tested and pushed but deployment is pending: automatic approval
-review rejected the incident deployment as requiring explicit approval beyond
-the earlier feature release. The cap is already active. The next health sample
-showed 10 total connections and no increase in the rejection counter (61).
+The tested fixes `76bac71` and `a8d2b9f` were deployed on November 26 after
+explicit incident-rollout approval. All nine deployed PHP file hashes match
+`a8d2b9f`. Live checks confirmed that bootstrap opens no connection and a real
+SQL connection opens on demand and is destroyed on release. The post-deployment
+sample showed 10 total connections, no lingering MakeLORA sessions and no
+increase in the maximum-connection rejection counter (61).
 
 Focused checks passed: actual in-memory SQLite PDO destruction/idempotence and
 transaction preservation (`php server/tests/database_connection.php`), three
@@ -579,5 +581,9 @@ unavailable local database: invalid authentication returns 401, invalid signed
 media returns 403, and only requests that need SQL return 503. Run
 `python3 -B -m unittest discover -s server/tests -p test_database_lifecycle.py` and
 `php server/tests/database_connection.php`. Media, dataset and generation/retry
-regressions pass. These are server-only source changes; deployment remains pending
-explicit incident-rollout approval, and the production account cap remains 8.
+regressions pass. Live HTTPS authentication/media guards returned the expected
+401/403 responses, and the generation retry timer remained active. The production
+account cap remains 8. No database restart, schema migration, global limit change
+or app build was needed. No deployment bundle, staging copy, media artifact or
+container image was created or retained. The separate dialog investigation was
+explicitly dropped by the owner.
