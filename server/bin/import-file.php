@@ -26,7 +26,9 @@ try {
         if (hash_file('sha256',$destination)!==$scan['sha256']) { throw new RuntimeException('Existing storage checksum mismatch'); }
         unlink($temp);
     } elseif (!rename($temp,$destination)) { throw new RuntimeException('Cannot finalize storage'); }
-    $db=new PDO($config['dsn'],$config['user'],$config['password'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_EMULATE_PREPARES=>false]);
+    require_once dirname(__DIR__).'/src/database-connection.php';
+    $db=null;
+    databaseConnection();
     $tensors=json_encode($scan['tensors'],JSON_THROW_ON_ERROR); unset($scan['tensors']);
     $sql='INSERT INTO makelora_files (sha256,original_name,display_name,storage_key,size_bytes,inspection_json,tensors_json,imported_at,inspected_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(),UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE inspection_json=VALUES(inspection_json),tensors_json=VALUES(tensors_json),inspected_at=UTC_TIMESTAMP()';
     $db->prepare($sql)->execute([$scan['sha256'],basename($argv[1]),$displayName,$key,$scan['size_bytes'],json_encode($scan,JSON_THROW_ON_ERROR),$tensors]);

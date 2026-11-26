@@ -544,6 +544,24 @@ python3 -B -m unittest discover -s server/tests -p test_datasets.py
 
 ### Database connection containment (November 26, 2026)
 
+Web requests, the retry worker and the CLI importer now share eight filesystem
+connection permits in `private_session_directory/database-connections`. All
+processes using this account must share that directory on the same host/filesystem.
+The gate opens PDO only after acquiring a permit, waits at most three seconds
+when busy, and returns the existing safe 503 rather than exceeding the account
+cap. Permits follow the actual PDO lifetime, including retained statements, and
+are released automatically when a process exits. Keep the small lock files in
+place: unlinking live lock files would break coordination. Invalid authentication
+and released media transfers still use no slot. No database migration is needed.
+`database_connection_limit` may be set to an integer from 1 to 8; the default
+remains 8 because a smaller limit has not been shown to preserve peak throughput.
+The MariaDB account cap remains the final backstop for external clients or hosts.
+
+Verify with `php server/tests/database_connection.php` and
+`python3 -B -m unittest discover -s server/tests -p 'test_database_*.py'`.
+The capacity regression uses eight separate SQLite processes and checks overload
+and recovery after a worker is killed, without production SQL or provider traffic.
+
 The shared MariaDB server has `max_connections=25`; its maximum-connection
 rejection counter was 61 during investigation. MakeLORA media requests previously
 kept the bootstrap PDO connection open while transferring output videos/images,

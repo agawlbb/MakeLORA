@@ -9,6 +9,9 @@ return [
  'dsn'=>'mysql:host=database;dbname=makelora_test;charset=utf8mb4',
  'user'=>'makelora_test',
  'password'=>'configure-outside-git',
+ // Shared by web and CLI workers. Must be 1–8; keep 8 unless measured load
+ // supports a smaller limit. All workers must share the private directory.
+ 'database_connection_limit'=>8,
  // Pre-create outside ALL web roots and Git checkouts, owned by the PHP user,
  // mode 0700. Sessions and the persistent provider token use mode 0600.
  // Never serve this path. Session expiry does not remove the provider token.
