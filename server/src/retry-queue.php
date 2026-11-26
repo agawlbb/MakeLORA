@@ -53,7 +53,7 @@ function retrySavePayload(string $id,array $input): string {
     // Persist only validated original inputs, never provider credentials or expiring URLs.
     $payload=$args;
     $payload['model']=$input['model'];$payload['_family']=$input['_family'] ?? 'qwen';
-    if (is_array($payload['image'])) $payload['image']=$payload['image'][0];
+    if (isset($payload['image']) && is_array($payload['image'])) $payload['image']=$payload['image'][0];
     unset($payload['lora_weights']);
     if (isset($args['seed'])) $payload['seed']=$args['seed'];
     $temporary=tempnam(retryPayloadDirectory(),'.request-');
@@ -105,7 +105,7 @@ function startRetryGeneration(array $input,array $device): array {
     $file=generationFile($input['model'] ?? '');
     $input['_family']=generationFamily($file['target_model']);
     generationSettings($input);
-    if ($input['_family']==='wan') requireVideoTools();
+    if (in_array($input['_family'],['wan','wan_replace'],true)) requireVideoTools();
     if (!readReplicateToken($config['private_session_directory'])) fail('Configure the Replicate token on the server first.',503);
     outputDirectory();
     $id=bin2hex(random_bytes(32)); $now=time();
@@ -133,7 +133,8 @@ function submitRetryAttempt(array $job): void {
     $token=readReplicateToken($config['private_session_directory']);
     if (!$token) { retryFinish($job,'failed','Replicate token is missing. Save a server token before submitting again.'); return; }
     $input=json_decode(file_get_contents(retryPayloadPath($job['retry_payload_key'])),true,16,JSON_THROW_ON_ERROR);
-    if (($input['model'] ?? '')===WAN_BASE_ID) $file=baseWanModel();
+    if (($input['model'] ?? '')===WAN_REPLACE_ID) $file=baseWanReplaceModel();
+    elseif (($input['model'] ?? '')===WAN_BASE_ID) $file=baseWanModel();
     else $file=query('SELECT * FROM makelora_files WHERE sha256=?',[$input['model']])->fetch();
     if (!$file || generationFamily($file['target_model'])!==($job['model_family'] ?? 'qwen')) { retryFinish($job,'failed','The selected weight is unavailable or its base model changed. Choose a weight and submit again.'); return; }
     $args=generationArguments($input,$file,$job);

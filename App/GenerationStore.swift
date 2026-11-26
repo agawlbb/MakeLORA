@@ -11,6 +11,7 @@ struct GenerationModel: Decodable, Identifiable {
     var family: String? = nil
     var mediaType: String? = nil
     var isBase: Bool? = nil
+    var isCharacterReplacement: Bool { id == "wan-2.2-animate-replace" }
     var isVideo: Bool { family == "wan" || mediaType == "video" }
 }
 struct GenerationOutput: Decodable, Identifiable {
@@ -39,6 +40,9 @@ struct GenerationSettings: Decodable {
     var inferenceSteps: Int? = nil
     var flowShift: Int? = nil
     var providerVersion: String? = nil
+    var resolution: String? = nil
+    var mergeAudio: Bool? = nil
+    var goFast: Bool? = nil
 }
 struct GenerationDetails: Decodable {
     let legacy: Bool
@@ -305,7 +309,7 @@ struct WanGenerationOptions {
             await refreshGallery()
         } catch { self.error = error.localizedDescription }
     }
-    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil, wan: WanGenerationOptions = WanGenerationOptions()) async -> GenerationSubmissionOutcome {
+    @discardableResult func generate(credential: DeviceCredential, model: GenerationModel, image: Data, prompt: String, ratio: String, scale: Double, seed: String, retryOffline: Bool = true, sourceOutputID: String? = nil, wan: WanGenerationOptions = WanGenerationOptions(), video: Data? = nil, videoMIME: String = "video/mp4", resolution: String = "720", mergeAudio: Bool = true, goFast: Bool = true) async -> GenerationSubmissionOutcome {
         guard !busy else { return .failed }
         activeCredential = credential
         busy = true; error = nil
@@ -313,7 +317,10 @@ struct WanGenerationOptions {
         defer { busy = false }
         do {
             var body: [String: Any] = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "prompt": prompt, "aspect_ratio": ratio, "lora_scale": scale, "retry_offline": retryOffline]
-            if model.isVideo {
+            if model.isCharacterReplacement {
+                guard let video, video.count <= 8_000_000 else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Choose an MP4 or MOV video up to 8 MB."]) }
+                body = ["model": model.id, "image": "data:image/jpeg;base64," + image.base64EncodedString(), "video": "data:" + videoMIME + ";base64," + video.base64EncodedString(), "resolution": resolution, "merge_audio": mergeAudio, "go_fast": goFast, "retry_offline": retryOffline]
+            } else if model.isVideo {
                 body["negative_prompt"] = wan.negativePrompt; body["fast_mode"] = wan.fastMode
                 body["sample_guide_scale"] = wan.guidance; body["sample_steps"] = wan.steps; body["sample_shift"] = wan.shift
                 body["disable_safety_checker"] = wan.disableSafetyChecker
@@ -323,6 +330,7 @@ struct WanGenerationOptions {
                 guard let value = Int(seed), (0...2147483647).contains(value) else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Seed must be a whole number from 0 to 2147483647."]) }
                 body["seed"] = value
             }
+            guard try JSONSerialization.data(withJSONObject: body).count <= 16_000_000 else { throw NSError(domain: "Generation", code: 2, userInfo: [NSLocalizedDescriptionKey: "Combined files are too large. Choose a smaller video or character image."]) }
             let reply = try JSONDecoder().decode(Prediction.self, from: await request("generate", credential: credential, body: body))
             jobs.insert(GenerationJob(id: reply.id, model: model.displayName, prompt: prompt, status: reply.status, latestStatus: reply.latestStatus ?? reply.status.capitalized), at: 0)
             localJob = nil

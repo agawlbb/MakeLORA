@@ -49,6 +49,24 @@ try {
     catch (RuntimeException $e) { check($e->getMessage()==='Invalid output video.','Real ffprobe rejects corrupt media'); }
     unlink($bad);
     foreach ([[null,100,[0,99]],['bytes=0-9',100,[0,9]],['bytes=90-',100,[90,99]],['bytes=-5',100,[95,99]],['bytes=0-1000',100,[0,99]],['bytes=100-',100,false],['bytes=4-2',100,false],['bytes=-0',100,false],['bytes=0-1,4-5',100,false]] as [$header,$size,$expected]) check(outputByteRange($header,$size)===$expected,'Byte range '.$header);
+    $replaceInput=['model'=>WAN_REPLACE_ID,'image'=>'data:image/jpeg;base64,AAAA','video'=>'data:video/mp4;base64,AAAA'];
+    check(generationFile(WAN_REPLACE_ID)===baseWanReplaceModel(),'Replacement base model available without weights');
+    foreach ([['video'=>null],['video'=>'https://example.invalid/video.mp4'],['image'=>[]],['resolution'=>'1080'],['merge_audio'=>'true'],['go_fast'=>1],['seed'=>-1],['seed'=>1.5]] as $override) {
+        try { generationSettings(array_replace($replaceInput,$override));throw new RuntimeException('Invalid replacement input accepted'); }
+        catch (Reply $reply) { check($reply->status===400,'Replacement validates before paid request'); }
+    }
+    $created=startGeneration($replaceInput,['id'=>'device-a','status'=>'active']);$replaceID=$created['id'];
+    $body=json_decode($transport->options[CURLOPT_POSTFIELDS],true);
+    check(str_ends_with($transport->url,'/models/'.WAN_REPLACE_PROVIDER.'/predictions'),'Replacement official endpoint');
+    check($body['input']['character_image']===$replaceInput['image'] && $body['input']['video']===$replaceInput['video'],'Both files sent using provider field names');
+    check(!isset($body['input']['image']) && !isset($body['input']['prompt']) && !isset($body['input']['lora_weights']),'No image editing or LoRA fields sent');
+    $settings=json_decode($recipes[$replaceID]['settings_json'],true);
+    check($settings['resolution']==='720' && $settings['mergeAudio']===true && $settings['goFast']===true,'Replacement settings retained');
+    check(file_get_contents(recipeInputPath($recipes[$replaceID]['input_key']))===base64_decode('AAAA'),'Character image retained for run again');
+    $downloadBytes=file_get_contents(__DIR__.'/fixtures/wan-output.mp4');
+    archiveGenerationPrediction($jobs[$replaceID],$prediction);
+    $replacementOutputs=array_values(array_filter($images,fn($o)=>$o['generation_id']===$replaceID));
+    check(count($replacementOutputs)===1 && $replacementOutputs[0]['media_type']==='video','Replacement output archived as video');
     echo "Wan official-model routing, settings, base/LoRA mapping, replay, actual MP4 validation, archival, deletion and byte ranges passed.\n";
 } finally {
     unset($downloadBytes);

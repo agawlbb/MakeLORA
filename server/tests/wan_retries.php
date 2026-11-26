@@ -30,6 +30,16 @@ try {
     $candidate['version']='hidden';
     $history=['results'=>[$candidate],'next'=>null];
     check(reconcileRetryAttempt($jobs[$customID],$attempt)['id']===$candidate['id'],'Reconciliation binds the callback despite an internal alias and hidden version');
+    resetQueueFixture();
+    $replace=['model'=>WAN_REPLACE_ID,'image'=>'data:image/jpeg;base64,AAAA','video'=>'data:video/quicktime;base64,AAAA','resolution'=>'480','merge_audio'=>false,'go_fast'=>false,'seed'=>42,'retry_offline'=>true];
+    $created=startGeneration($replace,['id'=>'device-a','status'=>'active']);$replaceID=$created['id'];
+    check($created['status']==='retry_scheduled','Replacement temporary rejection queues retry');
+    $payload=json_decode(file_get_contents(retryPayloadPath($jobs[$replaceID]['retry_payload_key'])),true);
+    check($payload['character_image']===$replace['image'] && $payload['video']===$replace['video'],'Both files retained privately for headless retries');
+    $createCode=201;forceDue($replaceID);processRetryJob($replaceID);
+    check(count($creates)===2 && str_ends_with($GLOBALS['createURLs'][1],'/models/'.WAN_REPLACE_PROVIDER.'/predictions'),'Replacement retry preserves model routing');
+    check($creates[1]['input']['resolution']==='480' && $creates[1]['input']['merge_audio']===false && $creates[1]['input']['go_fast']===false && $creates[1]['input']['seed']===42,'Retry preserves replacement options');
+    check($jobs[$replaceID]['retry_payload_key']===null,'Accepted replacement removes retained retry files');
     echo "Wan headless retry settings, official routing, base/LoRA transport, polling and reconciliation passed.\n";
 } finally {
     unset($fixtureBaseModel,$downloadBytes);

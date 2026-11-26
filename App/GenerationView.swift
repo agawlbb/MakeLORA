@@ -172,6 +172,9 @@ struct GenerationComposer: View {
         _scale = State(initialValue: settings.loraScale ?? 1)
         _seed = State(initialValue: settings.seed.map(String.init) ?? "")
         _retryOffline = State(initialValue: settings.retryOffline ?? true)
+        _resolution = State(initialValue: settings.resolution ?? "720")
+        _mergeAudio = State(initialValue: settings.mergeAudio ?? true)
+        _goFast = State(initialValue: settings.goFast ?? true)
         _sourceOutputID = State(initialValue: draft.details.hasInput ? draft.output.id : nil)
         _wan = State(initialValue: WanGenerationOptions(negativePrompt: settings.negativePrompt ?? "", fastMode: settings.fastMode ?? "Balanced", guidance: settings.guidanceScale ?? 5, steps: settings.inferenceSteps ?? 30, shift: settings.flowShift ?? 3, disableSafetyChecker: settings.disableSafetyChecker ?? false))
     }
@@ -189,6 +192,13 @@ struct GenerationComposer: View {
     @State private var wan = WanGenerationOptions()
     @State private var seed = ""
     @State private var retryOffline = true
+    @State private var videoFiles = false
+    @State private var video: Data?
+    @State private var videoName = ""
+    @State private var videoMIME = "video/mp4"
+    @State private var resolution = "720"
+    @State private var mergeAudio = true
+    @State private var goFast = true
     @State private var files = false
     @State private var importing = false
     @State private var importError: String?
@@ -219,7 +229,14 @@ struct GenerationComposer: View {
                     }
                 }
                 if useModel {
-                    Section("Input image") {
+                    if model?.isCharacterReplacement == true {
+                        Section("Input video") {
+                            Button("Choose video from Files") { videoFiles = true }.disabled(importing || store.busy)
+                            if video != nil { Text(videoName).font(.caption) }
+                            Text("Choose an MP4 or MOV up to 8 MB containing the character to replace. Choose the video again when running a previous result.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Section(model?.isCharacterReplacement == true ? "Character image" : "Input image") {
                         if let image, let preview = UIImage(data: image) { Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240) }
                         PhotosPicker("Choose from Photos", selection: $photo, matching: .images).disabled(importing || store.busy)
                         Button("Choose from Files") { files = true }.disabled(importing || store.busy)
@@ -227,18 +244,31 @@ struct GenerationComposer: View {
                         if importing { ProgressView("Preparing image…") }
                         if let importError { Text(importError).foregroundStyle(.red) }
                     }
-                    Section("Prompt") { TextEditor(text: $prompt).frame(minHeight: 100).accessibilityLabel("Editing prompt") }
+                    if model?.isCharacterReplacement != true {
+                        Section("Prompt") { TextEditor(text: $prompt).frame(minHeight: 100).accessibilityLabel("Editing prompt") }
+                    }
                     Section("Settings") {
-                        Picker("Aspect ratio", selection: $ratio) {
-                            if model?.isVideo != true { Text("Match input image").tag("match_input_image") }
-                            ForEach(model?.isVideo == true ? ["16:9", "9:16"] : ["1:1", "16:9", "9:16", "4:3", "3:4"], id: \.self) { Text($0).tag($0) }
-                        }
-                        if model?.isBase != true {
-                            VStack(alignment: .leading) { Text("LoRA scale: \(scale, specifier: "%.2f")"); Slider(value: $scale, in: 0...4, step: 0.05) }
+                        if model?.isCharacterReplacement == true {
+                            Picker("Resolution", selection: $resolution) {
+                                Text("480p").tag("480")
+                                Text("720p").tag("720")
+                            }
+                            Toggle("Keep input audio", isOn: $mergeAudio)
+                            Toggle("Faster generation", isOn: $goFast)
+                        } else {
+                            Picker("Aspect ratio", selection: $ratio) {
+                                if model?.isVideo != true { Text("Match input image").tag("match_input_image") }
+                                ForEach(model?.isVideo == true ? ["16:9", "9:16"] : ["1:1", "16:9", "9:16", "4:3", "3:4"], id: \.self) { Text($0).tag($0) }
+                            }
+                            if model?.isBase != true {
+                                VStack(alignment: .leading) { Text("LoRA scale: \(scale, specifier: "%.2f")"); Slider(value: $scale, in: 0...4, step: 0.05) }
+                            }
                         }
                         TextField("Seed (blank for random)", text: $seed).keyboardType(.numberPad)
-                        LabeledContent("Output format", value: model?.isVideo == true ? "MP4 · 480p" : "JPG")
-                        if model?.isVideo == true {
+                        LabeledContent("Output format", value: model?.isCharacterReplacement == true ? "MP4 · \(resolution)p" : (model?.isVideo == true ? "MP4 · 480p" : "JPG"))
+                        if model?.isCharacterReplacement == true {
+                            Text("The character image supplies the new appearance; the video supplies the scene and motion.").font(.caption).foregroundStyle(.secondary)
+                        } else if model?.isVideo == true {
                             DisclosureGroup("Advanced video settings") {
                                 TextField("Negative prompt", text: $wan.negativePrompt, axis: .vertical)
                                 Picker("Acceleration", selection: $wan.fastMode) { ForEach(["Off", "Balanced", "Fast"], id: \.self) { Text($0).tag($0) } }
@@ -257,7 +287,7 @@ struct GenerationComposer: View {
                     Button(model?.isVideo == true ? "Generate video" : "Generate image", systemImage: "sparkles") {
                         guard let credential = pairing.credential, let image, let model, model.supported else { return }
                         Task {
-                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID, wan: wan)
+                            let result = await store.generate(credential: credential, model: model, image: image, prompt: prompt, ratio: ratio, scale: scale, seed: seed, retryOffline: retryOffline, sourceOutputID: sourceOutputID, wan: wan, video: video, videoMIME: videoMIME, resolution: resolution, mergeAudio: mergeAudio, goFast: goFast)
                             switch result {
                             case .submitted: dismiss()
                             case .sourceUnavailable:
@@ -268,7 +298,7 @@ struct GenerationComposer: View {
                                 importError = store.error; store.error = nil
                             }
                         }
-                    }.disabled(image == nil || importing || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.busy || pairing.credential == nil || model?.supported != true)
+                    }.disabled(image == nil || importing || (model?.isCharacterReplacement == true ? video == nil : prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || store.busy || pairing.credential == nil || model?.supported != true)
                 }
             }
             .navigationTitle(useModel ? (model?.isVideo == true ? "Generate video" : "Generate image") : "Model details")
@@ -293,6 +323,19 @@ struct GenerationComposer: View {
                     try prepare(data)
                 } catch { image = nil; importError = error.localizedDescription }
             }
+        }
+        .fileImporter(isPresented: $videoFiles, allowedContentTypes: [.mpeg4Movie, .quickTimeMovie]) { result in
+            do {
+                let url = try result.get(); let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard size > 0, size <= 8_000_000 else { throw ProjectError.invalid("Choose a video up to 8 MB.") }
+                let bytes = try Data(contentsOf: url)
+                guard bytes.count <= 8_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
+                video = bytes; videoName = url.lastPathComponent
+                videoMIME = url.pathExtension.lowercased() == "mov" ? "video/quicktime" : "video/mp4"
+                importError = nil
+            } catch { video = nil; importError = error.localizedDescription }
         }
         .fileImporter(isPresented: $files, allowedContentTypes: [.image]) { result in
             do {
@@ -450,6 +493,12 @@ private struct GenerationSettingsView: View {
                     if let seed = details.resolvedSeed { LabeledContent("Resolved seed", value: String(seed)) }
                     LabeledContent("Output format", value: settings.outputFormat?.uppercased() ?? "Unavailable")
                     LabeledContent("Disable safety checker", value: settings.disableSafetyChecker == true ? "True" : "False")
+                    if let resolution = settings.resolution {
+                        LabeledContent("Resolution", value: resolution + "p")
+                        LabeledContent("Keep input audio", value: settings.mergeAudio == true ? "On" : "Off")
+                        LabeledContent("Faster generation", value: settings.goFast == true ? "On" : "Off")
+                        Text("Select the input video again when running this result.").font(.caption).foregroundStyle(.secondary)
+                    }
                     if let mode = settings.fastMode {
                         Section("Video settings") {
                             LabeledContent("Acceleration", value: mode)

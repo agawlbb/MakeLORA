@@ -154,7 +154,7 @@ function archiveGenerationPrediction(array $job,array $prediction,int $outputOff
         if ($prediction['status']==='succeeded') {
             $urls=$prediction['output'] ?? [];
             if (is_string($urls)) $urls=[$urls];
-            $video=($job['model_family'] ?? 'qwen')==='wan';
+            $video=in_array($job['model_family'] ?? 'qwen',['wan','wan_replace'],true);
             if (!is_array($urls) || !$urls) throw new RuntimeException('Missing provider outputs.');
             foreach ($urls as $index=>$url) {
                 if (!is_int($index) || $index<0 || $index>=10000) throw new RuntimeException('Invalid output index.');
@@ -220,6 +220,7 @@ function generationWebhook(?array $payload=null): never {
 function startGeneration(array $input, array $device): array {
     global $config,$db;
     $input=resolveGenerationSource($input);
+    if (($input['model'] ?? '')===WAN_REPLACE_ID) $input['prompt']='Replace character in video';
     if (isset($input['retry_offline']) && !is_bool($input['retry_offline'])) fail('Invalid retry option.');
     if ($input['retry_offline'] ?? false) return startRetryGeneration($input,$device);
     $file=generationFile($input['model'] ?? '');
@@ -227,7 +228,7 @@ function startGeneration(array $input, array $device): array {
     $token=readReplicateToken($config['private_session_directory']) ?? '';
     if ($token==='') fail('Configure the Replicate token on the server first.',503);
     // Check storage and video inspection before starting a paid job.
-    if (generationFamily($file['target_model'])==='wan') requireVideoTools();
+    if (in_array(generationFamily($file['target_model']),['wan','wan_replace'],true)) requireVideoTools();
     outputDirectory();
     $base=rtrim($config['base_url'],'/').'/api.php?';
     $id=bin2hex(random_bytes(32)); $callback=bin2hex(random_bytes(32));
@@ -320,13 +321,14 @@ function generationAPI(string $action, array $device): void {
             $file['sizeBytes']=(int)$file['sizeBytes'];
             $file['details']=json_encode(json_decode($file['inspection_json'],true)['metadata'] ?? [],JSON_UNESCAPED_SLASHES);
             unset($file['inspection_json']);
-            $file['supported']=supportedGenerationModel($file['baseModel']);
+            $file['supported']=supportedGenerationModel($file['baseModel']) && generationFamily($file['baseModel'])!=='wan_replace';
             $file['family']=generationFamily($file['baseModel']);
             $file['mediaType']=$file['family']==='wan' ? 'video':'image';
             $file['isBase']=false;
         }
         unset($file);
         $files[]=['id'=>WAN_BASE_ID,'displayName'=>baseWanModel()['display_name'],'baseModel'=>baseWanModel()['target_model'],'sizeBytes'=>0,'details'=>'Base Wan model, without custom LoRA weights.','supported'=>true,'family'=>'wan','mediaType'=>'video','isBase'=>true];
+        $files[]=['id'=>WAN_REPLACE_ID,'displayName'=>baseWanReplaceModel()['display_name'],'baseModel'=>WAN_REPLACE_PROVIDER,'sizeBytes'=>0,'details'=>'Replace a character using a video file and a character image. No custom LoRA weights.','supported'=>true,'family'=>'wan_replace','mediaType'=>'video','isBase'=>true];
         jsonResponse(['models'=>$files]);
     }
     if ($action==='cancel_retries' && $method==='POST') {
@@ -352,7 +354,7 @@ function generationAPI(string $action, array $device): void {
     }
     if ($action==='generate' && $method==='POST') {
         $raw=file_get_contents('php://input',false,null,0,16000001);
-        if (strlen($raw)>16000000) fail('Input image too large.',413);
+        if (strlen($raw)>16000000) fail('Combined input files exceed the 16 MB request limit.',413);
         jsonResponse(startGeneration(json_decode($raw,true,16,JSON_THROW_ON_ERROR),$device),201);
     }
 }
